@@ -1,4 +1,3 @@
-
 import React from "react";
 import { HoverCard, Heading, ValueDisplay } from "@/components/ui/layout";
 import { STRATEGIES, OPTION_TYPES } from "@/utils/forexData";
@@ -61,13 +60,16 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
               ? `${option.strike}% (${formatNumber(params.spot * option.strike / 100)})` 
               : formatNumber(option.strike);
               
-            const upperBarrierValue = option.upperBarrier 
+            const needsBarrier = option.type.includes("KO") || option.type.includes("KI");
+            const needsDoubleBarrier = option.type.includes("DKO") || option.type.includes("DKI");
+            
+            const upperBarrierValue = needsBarrier && option.upperBarrier 
               ? (option.upperBarrierType === "percentage" 
                 ? `${option.upperBarrier}% (${formatNumber(params.spot * option.upperBarrier / 100)})` 
                 : formatNumber(option.upperBarrier)) 
               : null;
               
-            const lowerBarrierValue = option.lowerBarrier 
+            const lowerBarrierValue = needsDoubleBarrier && option.lowerBarrier 
               ? (option.lowerBarrierType === "percentage" 
                 ? `${option.lowerBarrier}% (${formatNumber(params.spot * option.lowerBarrier / 100)})` 
                 : formatNumber(option.lowerBarrier)) 
@@ -86,9 +88,7 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
                   {upperBarrierValue && (
                     <div>
                       <span className="font-medium">
-                        {option.type.includes("DKO") || option.type.includes("DKI") 
-                          ? "Barrière haute:" 
-                          : "Barrière:"}
+                        {needsDoubleBarrier ? "Barrière haute:" : "Barrière:"}
                       </span> {upperBarrierValue}
                     </div>
                   )}

@@ -1,4 +1,3 @@
-
 import React from "react";
 import {
   LineChart,
@@ -105,7 +104,8 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
         if (firstDataPoint[key]) {
           let color = "#047857"; // Default green for strikes
           let dashArray = "3 3";
-          let position = "top";
+          const position = key.includes('Upper Barrier') ? 'top' : 
+                           key.includes('Lower Barrier') ? 'bottom' : 'top';
           
           if (key.includes('Upper Barrier')) {
             color = "#EF4444"; // Red for upper barriers
@@ -113,7 +113,6 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
           } else if (key.includes('Lower Barrier')) {
             color = "#10B981"; // Green for lower barriers
             dashArray = "5 5";
-            position = "bottom";
           }
           
           referenceLines.push(
@@ -125,7 +124,7 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
               strokeDasharray={dashArray}
               label={{
                 value: key,
-                position: position,
+                position: position as 'top' | 'bottom' | 'left' | 'right' | 'insideTop' | 'insideBottom' | 'insideLeft' | 'insideRight' | 'insideTopLeft' | 'insideTopRight' | 'insideBottomLeft' | 'insideBottomRight' | 'center',
                 fill: color,
                 fontSize: 12,
               }}

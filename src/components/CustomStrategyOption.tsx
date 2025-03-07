@@ -1,5 +1,4 @@
-
-import React from "react";
+import React, { useEffect } from "react";
 import { OPTION_TYPES, STRIKE_TYPES } from "@/utils/forexData";
 import { Trash } from "lucide-react";
 
@@ -48,6 +47,41 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
     }
     return value.toString();
   };
+
+  // Initialize barriers when option type changes
+  useEffect(() => {
+    const updates: Partial<OptionComponent> = {};
+    
+    // If this option needs a barrier but doesn't have one, add it
+    if (needsBarrier && !optionData.upperBarrier) {
+      const isCall = optionData.type.includes("call");
+      updates.upperBarrier = isCall ? 110 : 90;
+      updates.upperBarrierType = "percentage";
+    }
+    
+    // If this option needs two barriers but doesn't have the lower one, add it
+    if (needsDoubleBarrier && !optionData.lowerBarrier) {
+      const isCall = optionData.type.includes("call");
+      updates.lowerBarrier = isCall ? 90 : 110;
+      updates.lowerBarrierType = "percentage";
+    }
+    
+    // If this option no longer needs barriers, remove them
+    if (!needsBarrier && optionData.upperBarrier !== undefined) {
+      updates.upperBarrier = undefined;
+      updates.upperBarrierType = undefined;
+    }
+    
+    if (!needsDoubleBarrier && optionData.lowerBarrier !== undefined) {
+      updates.lowerBarrier = undefined;
+      updates.lowerBarrierType = undefined;
+    }
+    
+    // Apply updates if needed
+    if (Object.keys(updates).length > 0) {
+      onUpdate(index, updates);
+    }
+  }, [optionData.type, needsBarrier, needsDoubleBarrier]);
 
   return (
     <div className="bg-muted/30 p-4 rounded-lg mb-4">

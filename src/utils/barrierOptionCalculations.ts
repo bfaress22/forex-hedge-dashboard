@@ -217,36 +217,148 @@ export const calculateCustomStrategyPayoff = (
 ) => {
   let totalPayoff = 0;
   
-  options.forEach((option) => {
-    const quantity = option.quantity / 100; // Convert percentage to decimal
-    const strike = option.actualStrike;
+  // Calculer l'impact de chaque option sur le taux couvert
+  options.forEach(option => {
+    const { type, actualStrike, actualUpperBarrier, actualLowerBarrier, quantity } = option;
+    const quantityFactor = quantity / 100;
     let optionPayoff = 0;
+    const isCall = type.includes("call");
     
-    if (!strike) return; // Skip if no strike price defined
-    
-    // Calculate payoff based on option type
-    switch (option.type) {
-      case "call":
-        // For call, the payoff is max(0, spot - strike) * quantity
-        if (spotPrice > strike) {
-          optionPayoff = (strike - spotPrice) * quantity;
-        }
-        break;
-        
-      case "put":
-        // For put, the payoff is max(0, strike - spot) * quantity
-        if (spotPrice < strike) {
-          optionPayoff = (strike - spotPrice) * quantity;
-        }
-        break;
-        
-      // Add handling for barrier options if needed
-        
-      default:
-        break;
+    // Traitement spécial pour les calls vanille
+    if (type === "call") {
+      // Pour un call forex, l'effet sur le taux est:
+      // - si spot > strike, on est protégé au niveau du strike
+      // - si spot <= strike, l'option n'a pas d'effet
+      if (spotPrice > actualStrike) {
+        // La protection limite le taux au strike
+        // On calcule l'ajustement nécessaire
+        const adjustment = (spotPrice - actualStrike) * quantityFactor;
+        totalPayoff -= adjustment; // Soustrait l'excès au-dessus du strike
+      }
+    } 
+    // Autres types d'options restent inchangés
+    else if (type === "put") {
+      optionPayoff = Math.max(0, actualStrike - spotPrice);
+      totalPayoff += optionPayoff * quantityFactor;
     }
-    
-    totalPayoff += optionPayoff;
+    // Le reste du code pour les options barrière
+    else if (type.includes("KO") && !type.includes("DKO")) {
+      const isReverse = type.includes("Reverse");
+      const barrier = actualUpperBarrier;
+      
+      // Vérifier si le KO a été déclenché (barrière franchie)
+      let isKnockOut = false;
+      
+      if (isCall && !isReverse) {
+        // Call standard KO (up-and-out): KO si spot >= barrière
+        isKnockOut = spotPrice >= barrier;
+      } else if (isCall && isReverse) {
+        // Call reverse KO (down-and-out): KO si spot <= barrière
+        isKnockOut = spotPrice <= barrier;
+      } else if (!isCall && !isReverse) {
+        // Put standard KO (down-and-out): KO si spot <= barrière
+        isKnockOut = spotPrice <= barrier;
+      } else if (!isCall && isReverse) {
+        // Put reverse KO (up-and-out): KO si spot >= barrière
+        isKnockOut = spotPrice >= barrier;
+      }
+      
+      // Si pas KO, calculer le payoff normalement
+      if (!isKnockOut) {
+        if (isCall) {
+          // Pour un call, même logique que pour call vanille
+          if (spotPrice > actualStrike) {
+            const adjustment = (spotPrice - actualStrike) * quantityFactor;
+            totalPayoff -= adjustment;
+          }
+        } else {
+          // Pour un put, comportement standard
+          optionPayoff = Math.max(0, actualStrike - spotPrice);
+          totalPayoff += optionPayoff * quantityFactor;
+        }
+      }
+    } 
+    // Knock-In simple
+    else if (type.includes("KI") && !type.includes("DKI")) {
+      const isReverse = type.includes("Reverse");
+      const barrier = actualUpperBarrier;
+      
+      // Vérifier si le KI a été déclenché (barrière franchie)
+      let isKnockIn = false;
+      
+      if (isCall && !isReverse) {
+        // Call standard KI (up-and-in): KI si spot >= barrière
+        isKnockIn = spotPrice >= barrier;
+      } else if (isCall && isReverse) {
+        // Call reverse KI (down-and-in): KI si spot <= barrière
+        isKnockIn = spotPrice <= barrier;
+      } else if (!isCall && !isReverse) {
+        // Put standard KI (down-and-in): KI si spot <= barrière
+        isKnockIn = spotPrice <= barrier;
+      } else if (!isCall && isReverse) {
+        // Put reverse KI (up-and-in): KI si spot >= barrière
+        isKnockIn = spotPrice >= barrier;
+      }
+      
+      // Si KI activé, calculer le payoff
+      if (isKnockIn) {
+        if (isCall) {
+          // Pour un call, même logique que pour call vanille
+          if (spotPrice > actualStrike) {
+            const adjustment = (spotPrice - actualStrike) * quantityFactor;
+            totalPayoff -= adjustment;
+          }
+        } else {
+          // Pour un put, comportement standard
+          optionPayoff = Math.max(0, actualStrike - spotPrice);
+          totalPayoff += optionPayoff * quantityFactor;
+        }
+      }
+    } 
+    // Double KO
+    else if (type.includes("DKO")) {
+      const upperBarrier = actualUpperBarrier;
+      const lowerBarrier = actualLowerBarrier;
+      
+      // KO si le spot est en dehors des barrières
+      const isKnockOut = spotPrice >= upperBarrier || spotPrice <= lowerBarrier;
+      
+      if (!isKnockOut) {
+        if (isCall) {
+          // Pour un call, même logique que pour call vanille
+          if (spotPrice > actualStrike) {
+            const adjustment = (spotPrice - actualStrike) * quantityFactor;
+            totalPayoff -= adjustment;
+          }
+        } else {
+          // Pour un put, comportement standard
+          optionPayoff = Math.max(0, actualStrike - spotPrice);
+          totalPayoff += optionPayoff * quantityFactor;
+        }
+      }
+    } 
+    // Double KI
+    else if (type.includes("DKI")) {
+      const upperBarrier = actualUpperBarrier;
+      const lowerBarrier = actualLowerBarrier;
+      
+      // KI si le spot est en dehors des barrières
+      const isKnockIn = spotPrice >= upperBarrier || spotPrice <= lowerBarrier;
+      
+      if (isKnockIn) {
+        if (isCall) {
+          // Pour un call, même logique que pour call vanille
+          if (spotPrice > actualStrike) {
+            const adjustment = (spotPrice - actualStrike) * quantityFactor;
+            totalPayoff -= adjustment;
+          }
+        } else {
+          // Pour un put, comportement standard
+          optionPayoff = Math.max(0, actualStrike - spotPrice);
+          totalPayoff += optionPayoff * quantityFactor;
+        }
+      }
+    }
   });
   
   return totalPayoff;

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import CustomStrategyOption, { OptionComponent } from "./CustomStrategyOption";
 import { Plus } from "lucide-react";
