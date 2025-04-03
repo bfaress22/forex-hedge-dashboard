@@ -16,10 +16,16 @@ interface PayoffChartProps {
   data: any[];
   selectedStrategy: string;
   spot: number;
+  includePremium: boolean;
+  showNotional?: boolean;
+  notional?: number;
+  notionalQuote?: number;
+  baseCurrency?: string;
+  quoteCurrency?: string;
 }
 
 // Custom tooltip component for better styling
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label, showNotional, notional, baseCurrency, quoteCurrency }: any) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-background border border-border p-3 rounded-lg shadow-lg">
@@ -29,6 +35,19 @@ const CustomTooltip = ({ active, payload, label }: any) => {
             {entry.name}: {Number(entry.value).toFixed(4)}
           </p>
         ))}
+        {showNotional && (
+          <>
+            <hr className="my-2 border-border" />
+            <p>
+              <span className="font-medium">{baseCurrency} Amount:</span>{" "}
+              {notional?.toLocaleString()}
+            </p>
+            <p>
+              <span className="font-medium">{quoteCurrency} Amount:</span>{" "}
+              {(label * notional).toLocaleString()}
+            </p>
+          </>
+        )}
       </div>
     );
   }
@@ -36,7 +55,13 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
+const PayoffChart: React.FC<PayoffChartProps> = ({ 
+  data, selectedStrategy, spot, includePremium, 
+  showNotional, notional, notionalQuote, baseCurrency, quoteCurrency 
+}) => {
+  // Reverse the logic to fix the behavior
+  const shouldIncludePremium = !includePremium;
+  
   // Configure lines based on strategy
   const getChartConfig = () => {
     // Base lines that are shown for all strategies
@@ -49,6 +74,7 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
         strokeWidth={2}
         dot={false}
         activeDot={{ r: 6 }}
+        name={shouldIncludePremium ? "Hedged Rate (with premium)" : "Hedged Rate (without premium)"}
       />,
       <Line
         key="unhedged"
@@ -61,6 +87,37 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
         activeDot={{ r: 6 }}
       />,
     ];
+
+    // Add comparison line (with/without premium)
+    if (shouldIncludePremium && data.length > 0 && data[0]['Hedged Rate (No Premium)']) {
+      lines.push(
+        <Line
+          key="hedged-no-premium"
+          type="monotone"
+          dataKey="Hedged Rate (No Premium)"
+          stroke="#8B5CF6" // Purple
+          strokeWidth={2}
+          strokeDasharray="3 3"
+          dot={false}
+          activeDot={{ r: 4 }}
+          name="Hedged Rate (without premium)"
+        />
+      );
+    } else if (!shouldIncludePremium && data.length > 0 && data[0]['Hedged Rate with Premium']) {
+      lines.push(
+        <Line
+          key="hedged-with-premium"
+          type="monotone"
+          dataKey="Hedged Rate with Premium"
+          stroke="#EC4899" // Pink
+          strokeWidth={2}
+          strokeDasharray="3 3"
+          dot={false}
+          activeDot={{ r: 4 }}
+          name="Hedged Rate (with premium)"
+        />
+      );
+    }
 
     // Add reference lines based on strategy
     let referenceLines = [
@@ -172,11 +229,11 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
       }
     } else if (selectedStrategy === "callPutKI_KO" && data.length > 0) {
       // Add Upper and Lower barrier lines
-      if (data[0]["Upper Barrier"]) {
+      if (data[0]["Upper Barrier (KO)"]) {
         referenceLines.push(
           <ReferenceLine
             key="upper-barrier"
-            x={data[0]["Upper Barrier"]}
+            x={data[0]["Upper Barrier (KO)"]}
             stroke="#EF4444"
             strokeWidth={1}
             strokeDasharray="5 5"
@@ -190,11 +247,11 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
         );
       }
       
-      if (data[0]["Lower Barrier"]) {
+      if (data[0]["Lower Barrier (KI)"]) {
         referenceLines.push(
           <ReferenceLine
             key="lower-barrier"
-            x={data[0]["Lower Barrier"]}
+            x={data[0]["Lower Barrier (KI)"]}
             stroke="#10B981"
             strokeWidth={1}
             strokeDasharray="5 5"
@@ -216,12 +273,33 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
 
   const chartData = data?.length > 0 ? data : [];
 
+  // Simplifier l'affichage des nominaux dans le graphe
+  const renderNotionalReferences = () => {
+    if (!showNotional || !notional || !notionalQuote) return null;
+
+    return (
+      <>
+        <ReferenceLine
+          y={spot}
+          stroke="#82ca9d"
+          strokeDasharray="3 3"
+          label={{
+            value: `Notional: ${notional.toLocaleString()} ${baseCurrency} / ${notionalQuote.toLocaleString()} ${quoteCurrency}`,
+            position: 'insideTopRight',
+            fill: '#82ca9d'
+          }}
+        />
+      </>
+    );
+  };
+
   return (
     <GlassContainer className="p-0 overflow-hidden mt-6">
       <div className="p-4 border-b border-border">
         <h3 className="text-lg font-medium">Payoff Profile</h3>
         <p className="text-sm text-muted-foreground">
           Visualize how the {selectedStrategy} strategy performs across different exchange rates
+          {shouldIncludePremium ? " (with premium included)" : " (without premium)"}
         </p>
       </div>
       <div className="p-4" style={{ height: "400px" }}>
@@ -231,7 +309,7 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
             <XAxis
               dataKey="spot"
               domain={["dataMin", "dataMax"]}
-              tickFormatter={(value) => value.toFixed(2)}
+              tickFormatter={(value) => (typeof value === 'number' && !isNaN(value) ? value.toFixed(2) : '')}
               label={{
                 value: "Exchange Rate",
                 position: "insideBottom",
@@ -239,13 +317,19 @@ const PayoffChart = ({ data, selectedStrategy, spot }: PayoffChartProps) => {
               }}
             />
             <YAxis
-              tickFormatter={(value) => value.toFixed(2)}
+              tickFormatter={(value) => (typeof value === 'number' && !isNaN(value) ? value.toFixed(2) : '')}
               domain={["dataMin - 0.05", "dataMax + 0.05"]}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip 
+              showNotional={showNotional}
+              notional={notional}
+              baseCurrency={baseCurrency}
+              quoteCurrency={quoteCurrency}
+            />} />
             <Legend verticalAlign="top" height={36} />
             {lines}
             {referenceLines}
+            {showNotional && renderNotionalReferences()}
           </LineChart>
         </ResponsiveContainer>
       </div>

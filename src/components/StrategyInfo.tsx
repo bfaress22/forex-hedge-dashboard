@@ -1,14 +1,20 @@
-import React from "react";
+import React, { useState } from "react";
 import { HoverCard, Heading, ValueDisplay } from "@/components/ui/layout";
 import { STRATEGIES, OPTION_TYPES } from "@/utils/forexData";
+import { BARRIER_PRICING_MODELS } from "@/utils/barrierOptionCalculations";
+import { Info, X } from "lucide-react";
 
 interface StrategyInfoProps {
   selectedStrategy: string;
   results: any;
   params: any;
+  name: string;
+  description: string;
 }
 
-const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) => {
+const StrategyInfo = ({ selectedStrategy, results, params, name, description }: StrategyInfoProps) => {
+  const [showPricingFormulas, setShowPricingFormulas] = useState(false);
+
   if (!results) return null;
 
   const formatNumber = (num: number | undefined) => {
@@ -21,39 +27,158 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
     return (num * 100).toFixed(2) + "%";
   };
 
+  // Shows a dialog with detailed formulas information
+  const FormulaInfoDialog = () => {
+    if (!showPricingFormulas) return null;
+    
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/50">
+        <div className="bg-card border border-border rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold">Option Pricing Formulas</h2>
+            <button 
+              onClick={() => setShowPricingFormulas(false)}
+              className="p-1 hover:bg-muted rounded-full transition-colors"
+              aria-label="Close"
+            >
+              <X size={20} />
+            </button>
+          </div>
+          
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-medium mb-2">Black-Scholes Formulas</h3>
+              <div className="bg-muted/30 p-3 rounded-lg font-mono text-sm">
+                <p>Call Price = S·e<sup>-r₂T</sup>·N(d₁) - K·e<sup>-r₁T</sup>·N(d₂)</p>
+                <p>Put Price = K·e<sup>-r₁T</sup>·N(-d₂) - S·e<sup>-r₂T</sup>·N(-d₁)</p>
+                <p className="mt-2">Where:</p>
+                <p>d₁ = [ln(S/K) + (r₁-r₂+σ²/2)·T] / (σ·√T)</p>
+                <p>d₂ = d₁ - σ·√T</p>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                S = spot price, K = strike price, T = maturity, r₁ = base currency rate, 
+                r₂ = quote currency rate, σ = volatility, N() = cumulative normal distribution
+              </p>
+            </div>
+            
+            <div>
+              <h3 className="text-lg font-medium mb-2">Rubinstein-Reiner Barrier Option Formulas</h3>
+              <div className="bg-muted/30 p-3 rounded-lg font-mono text-sm">
+                <p className="font-bold">Down-and-Out Call (DOC):</p>
+                <p>DOC = C(S,K,T,r,σ) - (S/H)<sup>2λ</sup>·C(H²/S,K,T,r,σ)</p>
+                
+                <p className="font-bold mt-3">Up-and-Out Call (UOC):</p>
+                <p>UOC = C(S,K,T,r,σ) - S·(H/S)<sup>2λ-2</sup>·N(d₁') + K·e<sup>-rT</sup>·(H/S)<sup>2λ</sup>·N(d₂')</p>
+                
+                <p className="font-bold mt-3">Down-and-In Call (DIC):</p>
+                <p>DIC = (S/H)<sup>2λ</sup>·C(H²/S,K,T,r,σ)</p>
+                
+                <p className="font-bold mt-3">Up-and-In Call (UIC):</p>
+                <p>UIC = S·(H/S)<sup>2λ-2</sup>·N(d₁') - K·e<sup>-rT</sup>·(H/S)<sup>2λ</sup>·N(d₂')</p>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                H = barrier level, λ = (r₁-r₂+σ²/2)/σ², C() = Black-Scholes call price
+              </p>
+            </div>
+            
+            <div>
+              <h3 className="text-lg font-medium mb-2">Monte Carlo Simulation</h3>
+              <div className="bg-muted/30 p-3 rounded-lg text-sm">
+                <p>1. Simulate {10000} price paths using geometric Brownian motion:</p>
+                <p className="font-mono mt-1">S(t+Δt) = S(t)·exp[(r₁-r₂-σ²/2)·Δt + σ·√Δt·Z]</p>
+                <p className="mt-2">2. For each path, check if barrier conditions are met</p>
+                <p className="mt-1">3. Calculate payoff for each path</p>
+                <p className="mt-1">4. Average the payoffs and discount to present value</p>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Z = standard normal random variable, Δt = time step
+              </p>
+            </div>
+          </div>
+          
+          <div className="mt-6 flex justify-end">
+            <button 
+              onClick={() => setShowPricingFormulas(false)}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderCustomStrategyDetails = () => {
     if (!results.options || results.options.length === 0) {
       return (
         <div className="text-muted-foreground">
-          Aucune option ajoutée à la stratégie personnalisée.
+          No options added to the custom strategy.
         </div>
       );
     }
+
+    // Determine if we have any barrier options to show model info
+    const hasBarrierOptions = results.options.some((option: any) => 
+      option.type.includes("KO") || option.type.includes("KI")
+    );
+
+    // Get model name for display
+    const getPricingModelName = (modelCode: string) => {
+      switch(modelCode) {
+        case BARRIER_PRICING_MODELS.MONTE_CARLO:
+          return "Monte Carlo";
+        default:
+          return "Standard";
+      }
+    };
+
+    const pricingModel = results.globalParams?.pricingModel || 
+                         BARRIER_PRICING_MODELS.MONTE_CARLO;
 
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <ValueDisplay
-            label="Prime totale"
+            label="Total Premium"
             value={formatNumber(results.totalPremium)}
             suffix="% of notional"
             highlight
           />
           <ValueDisplay
-            label="Nombre d'options"
+            label="Number of Options"
             value={results.options.length.toString()}
           />
         </div>
 
+        {hasBarrierOptions && (
+          <div className="bg-primary/10 border border-primary/30 p-3 rounded-lg text-sm flex justify-between items-center">
+            <div>
+              <span className="font-medium">Barrier Option Pricing Model: </span>
+              <span className="text-primary">{getPricingModelName(pricingModel)}</span>
+              <p className="text-xs text-muted-foreground mt-1">
+                This affects the calculation of premium for barrier options.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowPricingFormulas(true)}
+              className="flex items-center text-xs text-primary hover:text-primary/80 transition-colors"
+            >
+              <Info size={14} className="mr-1" />
+              View Formulas
+            </button>
+          </div>
+        )}
+
         <div className="bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg text-sm">
           <p>
-            Cette stratégie personnalisée comprend {results.options.length} option(s) avec une prime totale de{" "}
+            This custom strategy includes {results.options.length} option(s) with a total premium of{" "}
             <strong>{formatNumber(results.totalPremium)}</strong>.
           </p>
         </div>
 
         <div className="mt-4">
-          <h4 className="font-medium mb-2">Détails des options:</h4>
+          <h4 className="font-medium mb-2">Option Details:</h4>
           {results.options.map((option: any, index: number) => {
             const optionType = OPTION_TYPES[option.type as keyof typeof OPTION_TYPES] || option.type;
             const strikeValue = option.strikeType === "percentage" 
@@ -88,25 +213,25 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
                   {upperBarrierValue && (
                     <div>
                       <span className="font-medium">
-                        {needsDoubleBarrier ? "Barrière haute:" : "Barrière:"}
+                        {needsDoubleBarrier ? "Upper Barrier:" : "Barrier:"}
                       </span> {upperBarrierValue}
                     </div>
                   )}
                   
                   {lowerBarrierValue && (
                     <div>
-                      <span className="font-medium">Barrière basse:</span> {lowerBarrierValue}
+                      <span className="font-medium">Lower Barrier:</span> {lowerBarrierValue}
                     </div>
                   )}
                   
                   <div>
-                    <span className="font-medium">Volatilité:</span> {option.volatility}%
+                    <span className="font-medium">Volatility:</span> {option.volatility}%
                   </div>
                   <div>
-                    <span className="font-medium">Quantité:</span> {option.quantity}%
+                    <span className="font-medium">Quantity:</span> {option.quantity}%
                   </div>
                   <div>
-                    <span className="font-medium">Prime:</span> {formatNumber(option.premium)}
+                    <span className="font-medium">Premium:</span> {formatNumber(option.premium)}
                   </div>
                 </div>
               </div>
@@ -123,19 +248,21 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
     }
     
     switch (selectedStrategy) {
-      case "collar":
+      case "collarPut":
+      case "collarCall":
+        const isFixedPut = selectedStrategy === "collarPut";
         return (
           <>
             <div className="grid grid-cols-2 gap-3 mb-4">
               <ValueDisplay
-                label="Put Strike"
+                label={isFixedPut ? "Put Strike (Fixed)" : "Put Strike (Adjusted)"}
                 value={formatNumber(results.putStrike)}
-                highlight
+                highlight={isFixedPut}
               />
               <ValueDisplay
-                label="Call Strike"
+                label={isFixedPut ? "Call Strike (Adjusted)" : "Call Strike (Fixed)"}
                 value={formatNumber(results.callStrike)}
-                highlight
+                highlight={!isFixedPut}
               />
               <ValueDisplay
                 label="Put Premium"
@@ -147,13 +274,21 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
                 value={formatNumber(results.callPrice)}
                 suffix="% of notional"
               />
+              <ValueDisplay
+                label="Net Premium"
+                value={formatNumber(results.totalPremium)}
+                suffix="% of notional"
+                className="col-span-2"
+              />
             </div>
             <div className="bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg text-sm">
               <p>
-                This zero-cost collar protects against rates below{" "}
+                This zero-cost collar with {isFixedPut ? "fixed put strike" : "fixed call strike"} protects against rates below{" "}
                 <strong>{formatNumber(results.putStrike)}</strong> while
                 capping gains above{" "}
                 <strong>{formatNumber(results.callStrike)}</strong>.
+                {Math.abs(results.totalPremium) > 0.0001 && 
+                  ` Net premium is ${formatNumber(results.totalPremium)}.`}
               </p>
             </div>
           </>
@@ -267,16 +402,26 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
                 highlight
               />
               <ValueDisplay
+                label="Option Quantity"
+                value={`${results.optionQuantity}%`}
+                highlight
+              />
+              <ValueDisplay
                 label="Put Premium"
                 value={formatNumber(results.putPrice)}
+                suffix="% of notional"
+              />
+              <ValueDisplay
+                label="Adjusted Premium"
+                value={formatNumber(results.adjustedPutPrice)}
                 suffix="% of notional"
               />
             </div>
             <div className="bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg text-sm">
               <p>
-                This put option provides downside protection below{" "}
+                This put option provides {results.optionQuantity}% protection below{" "}
                 <strong>{formatNumber(results.putStrike)}</strong> with a premium
-                cost of <strong>{formatNumber(results.putPrice)}</strong>.
+                cost of <strong>{formatNumber(results.adjustedPutPrice)}</strong>.
               </p>
             </div>
           </>
@@ -292,16 +437,26 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
                 highlight
               />
               <ValueDisplay
+                label="Option Quantity"
+                value={`${results.optionQuantity}%`}
+                highlight
+              />
+              <ValueDisplay
                 label="Call Premium"
                 value={formatNumber(results.callPrice)}
+                suffix="% of notional"
+              />
+              <ValueDisplay
+                label="Adjusted Premium"
+                value={formatNumber(results.adjustedCallPrice)}
                 suffix="% of notional"
               />
             </div>
             <div className="bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg text-sm">
               <p>
-                This call option provides upside protection above{" "}
+                This call option provides {results.optionQuantity}% protection above{" "}
                 <strong>{formatNumber(results.callStrike)}</strong> with a premium
-                cost of <strong>{formatNumber(results.callPrice)}</strong>.
+                cost of <strong>{formatNumber(results.adjustedCallPrice)}</strong>.
               </p>
             </div>
           </>
@@ -465,12 +620,16 @@ const StrategyInfo = ({ selectedStrategy, results, params }: StrategyInfoProps) 
   };
 
   return (
-    <HoverCard>
-      <Heading level={3}>
-        {STRATEGIES[selectedStrategy as keyof typeof STRATEGIES]?.name || "Stratégie"} - Results
-      </Heading>
-      {renderStrategyDetails()}
-    </HoverCard>
+    <>
+      <HoverCard>
+        <Heading level={3}>
+          {STRATEGIES[selectedStrategy as keyof typeof STRATEGIES]?.name || "Strategy"} - Results
+        </Heading>
+        {renderStrategyDetails()}
+      </HoverCard>
+      
+      {showPricingFormulas && <FormulaInfoDialog />}
+    </>
   );
 };
 

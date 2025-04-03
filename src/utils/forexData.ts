@@ -1,4 +1,3 @@
-
 // Forex pair data with trading information
 export const FOREX_PAIRS = {
     // Majors
@@ -42,62 +41,65 @@ export const FOREX_PAIRS = {
 
 // Available hedging strategies
 export const STRATEGIES = {
-    "collar": { 
-        name: "Collar à Prime Nulle",
-        description: "Protection contre la baisse avec limitation du potentiel de hausse, sans coût net",
-        needsStrikes: true
+    "collarPut": {
+        name: "Zero Cost Collar (Put Fixed)",
+        description: "Protection against downside with fixed put strike. Call strike adjusts automatically to achieve zero cost.",
+    },
+    "collarCall": {
+        name: "Zero Cost Collar (Call Fixed)",
+        description: "Protection against upside with fixed call strike. Put strike adjusts automatically to achieve zero cost.",
     },
     "forward": { 
-        name: "Forward (Contrat à terme)",
-        description: "Fixation du taux de change à une date future",
+        name: "Forward Contract",
+        description: "Fixing the exchange rate at a future date",
         needsStrikes: false
     },
     "strangle": { 
         name: "Strangle",
-        description: "Protection contre les mouvements extrêmes dans les deux sens",
+        description: "Protection against extreme movements in both directions",
         needsStrikes: true
     },
     "straddle": { 
         name: "Straddle",
-        description: "Protection contre la volatilité, sans préjuger de la direction",
+        description: "Protection against volatility, without predicting direction",
         needsStrikes: true
     },
     "seagull": { 
         name: "Seagull",
-        description: "Protection asymétrique avec financement partiel",
+        description: "Asymmetric protection with partial funding",
         needsStrikes: true
     },
     "put": { 
-        name: "Put simple",
-        description: "Protection simple contre la baisse, avec paiement de prime",
+        name: "Simple Put",
+        description: "Simple protection against downside, with premium payment",
         needsStrikes: true
     },
     "call": { 
-        name: "Call simple",
-        description: "Protection simple contre la hausse, avec paiement de prime",
+        name: "Simple Call",
+        description: "Simple protection against upside, with premium payment",
         needsStrikes: true
     },
     "callKO": {
-        name: "Call avec barrière KO",
-        description: "Protection contre la hausse avec barrière désactivante (Knock-Out)",
+        name: "Call with KO Barrier",
+        description: "Protection against upside with deactivating barrier (Knock-Out)",
         needsStrikes: true,
         needsBarrier: true
     },
     "putKI": {
-        name: "Put avec barrière KI",
-        description: "Protection contre la baisse avec barrière activante (Knock-In)",
+        name: "Put with KI Barrier",
+        description: "Protection against downside with activating barrier (Knock-In)",
         needsStrikes: true,
         needsBarrier: true
     },
     "callPutKI_KO": {
         name: "Call KO + Put KI",
-        description: "Combine un Call KO et un Put KI pour profiter d'une baisse jusqu'à une barrière",
+        description: "Combines a Call KO and a Put KI to benefit from a downside to a barrier",
         needsStrikes: true,
         needsBarrier: true
     },
     "custom": {
-        name: "Stratégie personnalisée",
-        description: "Composez votre propre stratégie en ajoutant des options",
+        name: "Custom Strategy",
+        description: "Build your own strategy by adding options",
         needsStrikes: false,
         isCustom: true
     }
@@ -113,10 +115,10 @@ export const FOREX_PAIR_CATEGORIES = {
     )
 };
 
-// Types d'options pour la stratégie personnalisée
+// Option types for custom strategy
 export const OPTION_TYPES = {
-    "call": "Call Vanille",
-    "put": "Put Vanille",
+    "call": "Vanilla Call",
+    "put": "Vanilla Put",
     "callKO": "Call Knock-Out",
     "callRKO": "Call Reverse Knock-Out",
     "callDKO": "Call Double Knock-Out",
@@ -131,18 +133,18 @@ export const OPTION_TYPES = {
     "putDKI": "Put Double Knock-In"
 };
 
-// Types de strike pour la stratégie personnalisée
+// Strike types for custom strategy
 export const STRIKE_TYPES = [
-    { value: "percentage", label: "Pourcentage du spot" },
-    { value: "absolute", label: "Valeur absolue" }
+    { value: "percent", label: "Percentage of spot" },
+    { value: "absolute", label: "Absolute value" }
 ];
 
-// Types de barrière pour les options avec barrière
+// Barrier types for options with barrier
 export const BARRIER_TYPES = {
-    "KO": "Knock-Out (désactivante)",
-    "RKO": "Reverse Knock-Out (désactivante inverse)",
-    "DKO": "Double Knock-Out (double barrière)",
-    "KI": "Knock-In (activante)",
-    "RKI": "Reverse Knock-In (activante inverse)",
-    "DKI": "Double Knock-In (double barrière)"
+    "KO": "Knock-Out (deactivating)",
+    "RKO": "Reverse Knock-Out (inverse deactivating)",
+    "DKO": "Double Knock-Out (double barrier)",
+    "KI": "Knock-In (activating)",
+    "RKI": "Reverse Knock-In (inverse activating)",
+    "DKI": "Double Knock-In (double barrier)"
 };

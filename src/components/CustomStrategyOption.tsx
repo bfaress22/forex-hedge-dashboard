@@ -13,11 +13,11 @@ interface CustomStrategyOptionProps {
 export interface OptionComponent {
   type: string;
   strike: number;
-  strikeType: "percentage" | "absolute";
+  strikeType: "percent" | "absolute";
   upperBarrier?: number;
-  upperBarrierType?: "percentage" | "absolute";
+  upperBarrierType?: "percent" | "absolute";
   lowerBarrier?: number;
-  lowerBarrierType?: "percentage" | "absolute";
+  lowerBarrierType?: "percent" | "absolute";
   volatility: number;
   quantity: number;
 }
@@ -33,16 +33,16 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
   const needsDoubleBarrier = optionData.type.includes("DKO") || optionData.type.includes("DKI");
 
   // Helper function to calculate actual strike based on type
-  const calculateActualValue = (value: number, type: "percentage" | "absolute") => {
-    if (type === "percentage") {
+  const calculateActualValue = (value: number, type: "percent" | "absolute") => {
+    if (type === "percent") {
       return spot * (value / 100);
     }
     return value;
   };
 
   // Helper to get display value
-  const getDisplayValue = (value: number, type: "percentage" | "absolute") => {
-    if (type === "percentage") {
+  const getDisplayValue = (value: number, type: "percent" | "absolute") => {
+    if (type === "percent") {
       return `${value}% (${(spot * value / 100).toFixed(4)})`;
     }
     return value.toString();
@@ -56,14 +56,14 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
     if (needsBarrier && !optionData.upperBarrier) {
       const isCall = optionData.type.includes("call");
       updates.upperBarrier = isCall ? 110 : 90;
-      updates.upperBarrierType = "percentage";
+      updates.upperBarrierType = "percent";
     }
     
     // If this option needs two barriers but doesn't have the lower one, add it
     if (needsDoubleBarrier && !optionData.lowerBarrier) {
       const isCall = optionData.type.includes("call");
       updates.lowerBarrier = isCall ? 90 : 110;
-      updates.lowerBarrierType = "percentage";
+      updates.lowerBarrierType = "percent";
     }
     
     // If this option no longer needs barriers, remove them
@@ -86,7 +86,7 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
   return (
     <div className="bg-muted/30 p-4 rounded-lg mb-4">
       <div className="grid grid-cols-5 gap-4">
-        {/* Type d'option */}
+        {/* Option Type */}
         <div>
           <label className="block text-sm font-medium mb-1">Type</label>
           <select
@@ -116,25 +116,25 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
             <select
               className="input-field w-1/3"
               value={optionData.strikeType}
-              onChange={(e) => onUpdate(index, { strikeType: e.target.value as "percentage" | "absolute" })}
+              onChange={(e) => onUpdate(index, { strikeType: e.target.value as "percent" | "absolute" })}
             >
               {STRIKE_TYPES.map((type) => (
                 <option key={type.value} value={type.value}>
-                  {type.value === "percentage" ? "%" : "#"}
+                  {type.value === "percent" ? "%" : "#"}
                 </option>
               ))}
             </select>
           </div>
           <div className="text-xs text-muted-foreground mt-1">
-            Valeur réelle: {calculateActualValue(optionData.strike, optionData.strikeType).toFixed(4)}
+            Actual value: {calculateActualValue(optionData.strike, optionData.strikeType).toFixed(4)}
           </div>
         </div>
 
-        {/* Barrière supérieure (pour KO, KI, etc.) */}
+        {/* Upper Barrier (for KO, KI, etc.) */}
         {needsBarrier && (
           <div>
             <label className="block text-sm font-medium mb-1">
-              {needsDoubleBarrier ? "Barrière Haute" : "Barrière"}
+              {needsDoubleBarrier ? "Upper Barrier" : "Barrier"}
             </label>
             <div className="flex space-x-2">
               <input
@@ -146,31 +146,31 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
               />
               <select
                 className="input-field w-1/3"
-                value={optionData.upperBarrierType || "percentage"}
+                value={optionData.upperBarrierType || "percent"}
                 onChange={(e) =>
-                  onUpdate(index, { upperBarrierType: e.target.value as "percentage" | "absolute" })
+                  onUpdate(index, { upperBarrierType: e.target.value as "percent" | "absolute" })
                 }
               >
                 {STRIKE_TYPES.map((type) => (
                   <option key={type.value} value={type.value}>
-                    {type.value === "percentage" ? "%" : "#"}
+                    {type.value === "percent" ? "%" : "#"}
                   </option>
                 ))}
               </select>
             </div>
             <div className="text-xs text-muted-foreground mt-1">
-              Valeur réelle: {calculateActualValue(
+              Actual value: {calculateActualValue(
                 optionData.upperBarrier || (optionData.type.includes("call") ? 110 : 90),
-                optionData.upperBarrierType || "percentage"
+                optionData.upperBarrierType || "percent"
               ).toFixed(4)}
             </div>
           </div>
         )}
 
-        {/* Barrière inférieure (pour DKO, DKI) */}
+        {/* Lower Barrier (for DKO, DKI) */}
         {needsDoubleBarrier && (
           <div>
-            <label className="block text-sm font-medium mb-1">Barrière Basse</label>
+            <label className="block text-sm font-medium mb-1">Lower Barrier</label>
             <div className="flex space-x-2">
               <input
                 type="number"
@@ -181,30 +181,30 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
               />
               <select
                 className="input-field w-1/3"
-                value={optionData.lowerBarrierType || "percentage"}
+                value={optionData.lowerBarrierType || "percent"}
                 onChange={(e) =>
-                  onUpdate(index, { lowerBarrierType: e.target.value as "percentage" | "absolute" })
+                  onUpdate(index, { lowerBarrierType: e.target.value as "percent" | "absolute" })
                 }
               >
                 {STRIKE_TYPES.map((type) => (
                   <option key={type.value} value={type.value}>
-                    {type.value === "percentage" ? "%" : "#"}
+                    {type.value === "percent" ? "%" : "#"}
                   </option>
                 ))}
               </select>
             </div>
             <div className="text-xs text-muted-foreground mt-1">
-              Valeur réelle: {calculateActualValue(
+              Actual value: {calculateActualValue(
                 optionData.lowerBarrier || (optionData.type.includes("call") ? 90 : 110),
-                optionData.lowerBarrierType || "percentage"
+                optionData.lowerBarrierType || "percent"
               ).toFixed(4)}
             </div>
           </div>
         )}
 
-        {/* Volatilité */}
+        {/* Volatility */}
         <div>
-          <label className="block text-sm font-medium mb-1">Volatilité (%)</label>
+          <label className="block text-sm font-medium mb-1">Volatility (%)</label>
           <input
             type="number"
             className="input-field w-full"
@@ -216,9 +216,9 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
           />
         </div>
 
-        {/* Quantité */}
+        {/* Quantity */}
         <div className="relative">
-          <label className="block text-sm font-medium mb-1">Quantité (%)</label>
+          <label className="block text-sm font-medium mb-1">Quantity (%)</label>
           <div className="flex items-center">
             <input
               type="number"
@@ -232,7 +232,7 @@ const CustomStrategyOption: React.FC<CustomStrategyOptionProps> = ({
             <button
               onClick={() => onDelete(index)}
               className="absolute right-0 top-8 p-2 text-destructive hover:text-destructive/80 transition-colors"
-              title="Supprimer cette option"
+              title="Delete this option"
             >
               <Trash size={20} />
             </button>

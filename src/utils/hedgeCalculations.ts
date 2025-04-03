@@ -179,6 +179,7 @@ export const calculateStrategyResults = (
     r1: number;
     r2: number;
     vol: number;
+    optionQuantity?: number;
   }
 ) => {
   const { spot, strikeUpper, strikeLower, strikeMid, barrierUpper, barrierLower, maturity, r1, r2, vol } = params;
@@ -199,7 +200,7 @@ export const calculateStrategyResults = (
       const forwardRate = calculateForward(spot, maturity, r1, r2);
       return {
         forwardRate,
-        details: `Taux à terme fixé à ${forwardRate.toFixed(4)}`
+        details: `Forward rate fixed at ${forwardRate.toFixed(4)}`
       };
     
     case 'strangle':
@@ -225,16 +226,22 @@ export const calculateStrategyResults = (
     
     case 'put':
       const simplePutPrice = calculatePut(spot, strikeLower, maturity, r1, r2, vol);
+      const adjustedPutPrice = simplePutPrice * (params.optionQuantity || 100) / 100;
       return {
         putStrike: strikeLower,
-        putPrice: simplePutPrice
+        putPrice: simplePutPrice,
+        adjustedPutPrice,
+        optionQuantity: params.optionQuantity || 100
       };
     
     case 'call':
       const simpleCallPrice = calculateCall(spot, strikeUpper, maturity, r1, r2, vol);
+      const adjustedCallPrice = simpleCallPrice * (params.optionQuantity || 100) / 100;
       return {
         callStrike: strikeUpper,
-        callPrice: simpleCallPrice
+        callPrice: simpleCallPrice,
+        adjustedCallPrice,
+        optionQuantity: params.optionQuantity || 100
       };
     
     case 'seagull':
@@ -261,7 +268,7 @@ export const calculateStrategyResults = (
         callStrike: strikeUpper,
         barrier: barrierUpper,
         callPrice: callKOPrice,
-        details: "Call KO désactivé si le taux dépasse la barrière"
+        details: "Call KO deactivated if the rate exceeds the barrier"
       };
     
     case 'putKI':
@@ -271,7 +278,7 @@ export const calculateStrategyResults = (
         putStrike: strikeLower,
         barrier: barrierUpper,
         putPrice: putKIPrice,
-        details: "Put KI activé si le taux dépasse la barrière"
+        details: "Put KI activated if the rate exceeds the barrier"
       };
     
     case 'callPutKI_KO':
@@ -287,8 +294,76 @@ export const calculateStrategyResults = (
         callPrice: comboCallKOPrice,
         putPrice: comboPutKIPrice,
         totalPremium: comboCallKOPrice + comboPutKIPrice,
-        details: "Stratégie pour profiter d'une baisse jusqu'à la barrière"
+        details: "Strategy to benefit from a downside movement to the barrier"
       };
+    
+    case 'collarPut': {
+      // L'utilisateur fixe le put strike, le call strike s'ajuste automatiquement
+      const { spot, strikeLower, maturity, r1, r2, vol } = params;
+      const putStrike = strikeLower;
+      const putPrice = calculatePut(spot, putStrike, maturity, r1, r2, vol);
+      
+      // Trouver le strike du call qui donne le même prix que le put
+      let callStrike = spot * 1.05; // Valeur initiale
+      let callPrice = calculateCall(spot, callStrike, maturity, r1, r2, vol);
+      
+      // Ajuster iterativement le strike du call pour obtenir un coût net proche de zéro
+      const precision = 0.0001;
+      const maxIterations = 50;
+      let iterations = 0;
+      
+      while (Math.abs(callPrice - putPrice) > precision && iterations < maxIterations) {
+        if (callPrice > putPrice) {
+          callStrike += spot * 0.01; // Augmenter le strike pour réduire le premium
+        } else {
+          callStrike -= spot * 0.01; // Réduire le strike pour augmenter le premium
+        }
+        callPrice = calculateCall(spot, callStrike, maturity, r1, r2, vol);
+        iterations++;
+      }
+      
+      return {
+        putStrike,
+        callStrike,
+        putPrice,
+        callPrice,
+        totalPremium: putPrice - callPrice, // Devrait être proche de zéro
+      };
+    }
+    
+    case 'collarCall': {
+      // L'utilisateur fixe le call strike, le put strike s'ajuste automatiquement
+      const { spot, strikeUpper, maturity, r1, r2, vol } = params;
+      const callStrike = strikeUpper;
+      const callPrice = calculateCall(spot, callStrike, maturity, r1, r2, vol);
+      
+      // Trouver le strike du put qui donne le même prix que le call
+      let putStrike = spot * 0.95; // Valeur initiale
+      let putPrice = calculatePut(spot, putStrike, maturity, r1, r2, vol);
+      
+      // Ajuster iterativement le strike du put pour obtenir un coût net proche de zéro
+      const precision = 0.0001;
+      const maxIterations = 50;
+      let iterations = 0;
+      
+      while (Math.abs(putPrice - callPrice) > precision && iterations < maxIterations) {
+        if (putPrice > callPrice) {
+          putStrike -= spot * 0.01; // Réduire le strike pour réduire le premium
+        } else {
+          putStrike += spot * 0.01; // Augmenter le strike pour augmenter le premium
+        }
+        putPrice = calculatePut(spot, putStrike, maturity, r1, r2, vol);
+        iterations++;
+      }
+      
+      return {
+        putStrike,
+        callStrike,
+        putPrice,
+        callPrice,
+        totalPremium: putPrice - callPrice, // Devrait être proche de zéro
+      };
+    }
     
     default:
       return null;
@@ -296,8 +371,11 @@ export const calculateStrategyResults = (
 };
 
 // Calculate payoff data for chart
-export const calculatePayoff = (results: any, selectedStrategy: string, params: any) => {
+export const calculatePayoff = (results: any, selectedStrategy: string, params: any, includePremiumInPayoff: boolean = true) => {
   if (!results) return [];
+  
+  // Reverse the logic of includePremiumInPayoff to fix the behavior
+  const shouldIncludePremium = !includePremiumInPayoff;
   
   const spots = [];
   const minSpot = params.spot * 0.7;
@@ -307,14 +385,20 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
   for (let spot = minSpot; spot <= maxSpot; spot += step) {
     const noHedgePayoff = spot;
     let hedgedPayoff;
+    let hedgedPayoffWithPremium;
 
     switch(selectedStrategy) {
       case 'collar':
+      case 'collarPut':
+      case 'collarCall':
         hedgedPayoff = Math.min(Math.max(spot, results.putStrike), results.callStrike);
+        // Collar is typically zero-cost, but we'll account for any premium difference just in case
+        hedgedPayoffWithPremium = hedgedPayoff - (results.callPrice - results.putPrice);
         break;
       
       case 'forward':
         hedgedPayoff = results.forwardRate;
+        hedgedPayoffWithPremium = hedgedPayoff;
         break;
       
       case 'strangle':
@@ -326,25 +410,39 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
           hedgedPayoff = spot; // Between strikes, no protection
         }
         // Adjust for premium cost
-        hedgedPayoff -= results.totalPremium;
+        hedgedPayoffWithPremium = hedgedPayoff - results.totalPremium;
         break;
       
       case 'straddle':
         hedgedPayoff = results.strike; // Protection in both directions
         // Adjust for premium cost
-        hedgedPayoff -= results.totalPremium;
+        hedgedPayoffWithPremium = hedgedPayoff - results.totalPremium;
         break;
       
       case 'put':
-        hedgedPayoff = Math.max(spot, results.putStrike);
-        // Adjust for premium cost
-        hedgedPayoff -= results.putPrice;
+        // Ajuster le payoff en fonction de la quantité
+        const quantity = results.optionQuantity / 100 || 1;
+        if (spot < results.putStrike) {
+          // Protection partielle selon la quantité
+          hedgedPayoff = spot + ((results.putStrike - spot) * quantity);
+        } else {
+          hedgedPayoff = spot;
+        }
+        // Ajuster pour le coût de la prime
+        hedgedPayoffWithPremium = hedgedPayoff - results.adjustedPutPrice;
         break;
       
       case 'call':
-        hedgedPayoff = Math.min(spot, results.callStrike);
-        // Adjust for premium cost
-        hedgedPayoff -= results.callPrice;
+        // Ajuster le payoff en fonction de la quantité
+        const callQuantity = results.optionQuantity / 100 || 1;
+        if (spot > results.callStrike) {
+          // Protection partielle selon la quantité
+          hedgedPayoff = spot - ((spot - results.callStrike) * callQuantity);
+        } else {
+          hedgedPayoff = spot;
+        }
+        // Ajuster pour le coût de la prime
+        hedgedPayoffWithPremium = hedgedPayoff - results.adjustedCallPrice;
         break;
       
       case 'seagull':
@@ -362,7 +460,7 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
           hedgedPayoff = spot;
         }
         // Adjust for net premium
-        hedgedPayoff -= results.netPremium;
+        hedgedPayoffWithPremium = hedgedPayoff - results.netPremium;
         break;
       
       case 'callKO':
@@ -377,7 +475,7 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
           hedgedPayoff = spot;
         }
         // Adjust for premium cost
-        hedgedPayoff -= results.callPrice;
+        hedgedPayoffWithPremium = hedgedPayoff - results.callPrice;
         break;
       
       case 'putKI':
@@ -389,7 +487,7 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
           hedgedPayoff = spot;
         }
         // Adjust for premium cost
-        hedgedPayoff -= results.putPrice;
+        hedgedPayoffWithPremium = hedgedPayoff - results.putPrice;
         break;
       
       case 'callPutKI_KO':
@@ -410,22 +508,36 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
           hedgedPayoff = spot;
         }
         // Adjust for premium cost
-        hedgedPayoff -= results.totalPremium;
+        hedgedPayoffWithPremium = hedgedPayoff - results.totalPremium;
         break;
       
       default:
         hedgedPayoff = spot;
+        hedgedPayoffWithPremium = spot;
     }
     
     const dataPoint: any = {
       spot: parseFloat(spot.toFixed(4)),
-      'Hedged Rate': parseFloat(hedgedPayoff.toFixed(4)),
       'Unhedged Rate': parseFloat(noHedgePayoff.toFixed(4)),
       'Initial Spot': parseFloat(params.spot.toFixed(4))
     };
     
+    // Add the appropriate hedged rate based on premium inclusion preference
+    if (shouldIncludePremium) {
+      dataPoint['Hedged Rate'] = parseFloat(hedgedPayoffWithPremium.toFixed(4));
+    } else {
+      dataPoint['Hedged Rate'] = parseFloat(hedgedPayoff.toFixed(4));
+    }
+    
+    // Also add the alternative rate for comparison
+    if (shouldIncludePremium) {
+      dataPoint['Hedged Rate (No Premium)'] = parseFloat(hedgedPayoff.toFixed(4));
+    } else {
+      dataPoint['Hedged Rate with Premium'] = parseFloat(hedgedPayoffWithPremium.toFixed(4));
+    }
+    
     // Add relevant strikes based on strategy
-    if (selectedStrategy === 'collar') {
+    if (selectedStrategy === 'collar' || selectedStrategy === 'collarPut' || selectedStrategy === 'collarCall') {
       dataPoint['Put Strike'] = parseFloat(results.putStrike.toFixed(4));
       dataPoint['Call Strike'] = parseFloat(results.callStrike.toFixed(4));
     } else if (selectedStrategy === 'strangle') {
@@ -452,12 +564,12 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
     } else if (selectedStrategy === 'callPutKI_KO') {
       dataPoint['Call Strike'] = parseFloat(results.callStrike.toFixed(4));
       dataPoint['Put Strike'] = parseFloat(results.putStrike.toFixed(4));
-      dataPoint['Upper Barrier'] = parseFloat(results.barrierUpper.toFixed(4));
-      dataPoint['Lower Barrier'] = parseFloat(results.barrierLower.toFixed(4));
+      dataPoint['Upper Barrier (KO)'] = parseFloat(results.barrierUpper.toFixed(4));
+      dataPoint['Lower Barrier (KI)'] = parseFloat(results.barrierLower.toFixed(4));
     }
     
     spots.push(dataPoint);
   }
-
+  
   return spots;
 };
