@@ -2,7 +2,8 @@
 
 // Models for barrier option pricing
 export const BARRIER_PRICING_MODELS = {
-  MONTE_CARLO: "monte_carlo"
+  MONTE_CARLO: "monte_carlo",
+  CLOSED_FORM: "closed_form"
 };
 
 // Default model
@@ -22,34 +23,237 @@ export const calculateBarrierOptionPrice = (
   type: string,
   spot: number,
   strike: number,
-  upperBarrier: number | undefined,
-  lowerBarrier: number | undefined,
-  maturity: number,
-  r1: number,
-  r2: number,
-  vol: number,
-  quantity: number = 1,
-  model: string = currentPricingModel
+  upperBarrier?: number,
+  lowerBarrier?: number,
+  maturity?: number,
+  r1?: number,
+  r2?: number,
+  vol?: number,
+  quantity: number = 100
 ) => {
-  // Extract the base option type and barrier type
-  const isCall = type.includes("call");
-  const isPut = type.includes("put");
-  const isKO = type.includes("KO");
-  const isKI = type.includes("KI");
-  const isReverse = type.includes("R");
-  const isDouble = type.includes("D");
+  // Default values if parameters are undefined
+  const t = maturity || 1.0; // Default maturity: 1 year
+  const domesticRate = r1 || 0.02; // Default domestic interest rate: 2%
+  const foreignRate = r2 || 0.01; // Default foreign interest rate: 1%
+  const volatility = vol || 0.15; // Default volatility: 15%
   
-  // Validate inputs
-  if (maturity <= 0 || vol <= 0) {
-    return 0; // Cannot calculate with invalid inputs
+  // Parse option type
+  const isCall = type.includes('call');
+  const isPut = type.includes('put') || (!isCall && !type.includes('forward'));
+  const isKO = type.includes('KO');
+  const isKI = type.includes('KI');
+  const isReverse = type.includes('reverse');
+  const isDouble = upperBarrier !== undefined && lowerBarrier !== undefined;
+  
+  // Validate parameters
+  if (spot <= 0 || strike <= 0 || volatility <= 0 || t <= 0) {
+    console.error("Invalid parameters for barrier option pricing:", { spot, strike, volatility, t });
+    return 0;
   }
   
-  // Using only Monte Carlo for all barrier options
-    return calculateMonteCarloPrice(
-      isCall, isPut, isKO, isKI, isReverse, isDouble,
-      spot, strike, upperBarrier, lowerBarrier, 
-      maturity, r1, r2, vol, quantity
-    );
+  if ((isKO || isKI) && upperBarrier === undefined && lowerBarrier === undefined) {
+    console.error("Barrier option specified but no barriers provided:", type);
+    return 0;
+  }
+  
+  // Vanilla options calculated using closed-form solution
+  if (!isKO && !isKI) {
+    if (isCall) {
+      return calculateCallPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
+    } else if (isPut) {
+      return calculatePutPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
+    }
+  }
+  
+  // For barrier options, use the selected pricing model
+  if (currentPricingModel === BARRIER_PRICING_MODELS.CLOSED_FORM) {
+    // Use closed-form solution for barrier options when possible
+    // Note: Currently only supports single barrier options, not double barriers
+    if (!isDouble) {
+      const barrier = upperBarrier || 0;
+      return calculateClosedFormBarrierOptionPrice(
+        isCall, isPut, isKO, isKI, isReverse,
+        spot, strike, barrier, t,
+        domesticRate, foreignRate, volatility, quantity
+      );
+    } else {
+      console.warn("Closed-form solution not available for double barrier options. Falling back to Monte Carlo.");
+    }
+  }
+  
+  // Use Monte Carlo simulation as a fallback or if specifically selected
+  return calculateMonteCarloPrice(
+    isCall, isPut, isKO, isKI, isReverse, isDouble,
+    spot, strike, upperBarrier, lowerBarrier, t,
+    domesticRate, foreignRate, volatility, quantity
+  );
+};
+
+// Closed-form analytical solution for barrier options (single barrier only)
+const calculateClosedFormBarrierOptionPrice = (
+  isCall: boolean, isPut: boolean, isKO: boolean, isKI: boolean, 
+  isReverse: boolean, spot: number, strike: number, barrier: number, 
+  maturity: number, r1: number, r2: number, vol: number, quantity: number
+) => {
+  // Standard parameters used in multiple calculations
+  const sigma = vol;
+  const T = maturity;
+  const S = spot;
+  const K = strike;
+  const H = barrier; // The barrier level
+  const r_d = r1; // Domestic interest rate
+  const r_f = r2; // Foreign interest rate
+  
+  // Calculate the drift term in the risk-neutral measure
+  const mu = r_d - r_f - 0.5 * sigma * sigma;
+  
+  // Calculate common terms
+  const sigma_sqrt_T = sigma * Math.sqrt(T);
+  const lambda = (mu + 0.5 * sigma * sigma) / (sigma * sigma);
+  const x = Math.log(S / K) / sigma_sqrt_T + lambda * sigma_sqrt_T;
+  const y = Math.log(H * H / (S * K)) / sigma_sqrt_T + lambda * sigma_sqrt_T;
+  const h = Math.log(H / S) / sigma_sqrt_T + lambda * sigma_sqrt_T;
+  const h_minus = h - 2 * lambda * sigma_sqrt_T;
+
+  // Power terms for the barrier formulas
+  const two_lambda = 2 * lambda;
+  const pow_term = Math.pow(H / S, two_lambda);
+  
+  let price = 0;
+  
+  // Calculate price based on option type
+  if (isCall) {
+    if (isKO) {
+      if (!isReverse) {
+        // Up-and-Out Call (standard)
+        if (H <= K) {
+          // Barrier below or at strike: standard call price
+          price = calculateCallPrice(S, K, T, r_d, r_f, sigma);
+        } else {
+          // Barrier above strike: up-and-out call formula
+          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
+          const adjustment = S * Math.exp(-r_f * T) * normCDF(x) - 
+                            K * Math.exp(-r_d * T) * normCDF(x - sigma_sqrt_T);
+          
+          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(y) - 
+                              K * Math.exp(-r_d * T) * pow_term * normCDF(y - sigma_sqrt_T);
+          
+          price = vanilla_call - adjustment + barrier_term;
+        }
+      } else {
+        // Down-and-Out Call (reverse)
+        if (H >= K) {
+          // Barrier above or at strike: standard call price
+          price = calculateCallPrice(S, K, T, r_d, r_f, sigma);
+        } else {
+          // Barrier below strike: down-and-out call formula
+          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
+          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(-h) - 
+                              K * Math.exp(-r_d * T) * pow_term * normCDF(-h + sigma_sqrt_T);
+          
+          price = vanilla_call - barrier_term;
+        }
+      }
+    } else if (isKI) {
+      if (!isReverse) {
+        // Up-and-In Call (standard)
+        if (H <= K) {
+          // Barrier below or at strike: zero (never activated)
+          price = 0;
+        } else {
+          // Barrier above strike: up-and-in call formula
+          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
+          const adjustment = S * Math.exp(-r_f * T) * normCDF(x) - 
+                            K * Math.exp(-r_d * T) * normCDF(x - sigma_sqrt_T);
+          
+          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(y) - 
+                              K * Math.exp(-r_d * T) * pow_term * normCDF(y - sigma_sqrt_T);
+          
+          price = vanilla_call - (vanilla_call - adjustment + barrier_term);
+        }
+      } else {
+        // Down-and-In Call (reverse)
+        if (H >= K) {
+          // Barrier above or at strike: zero (never activated)
+          price = 0;
+        } else {
+          // Barrier below strike: down-and-in call formula
+          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
+          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(-h) - 
+                              K * Math.exp(-r_d * T) * pow_term * normCDF(-h + sigma_sqrt_T);
+          
+          price = barrier_term;
+        }
+      }
+    }
+  } else if (isPut) {
+    if (isKO) {
+      if (!isReverse) {
+        // Down-and-Out Put (standard)
+        if (H >= K) {
+          // Barrier above or at strike: standard put price
+          price = calculatePutPrice(S, K, T, r_d, r_f, sigma);
+        } else {
+          // Barrier below strike: down-and-out put formula
+          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
+          const adjustment = K * Math.exp(-r_d * T) * normCDF(-x + sigma_sqrt_T) - 
+                            S * Math.exp(-r_f * T) * normCDF(-x);
+          
+          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(-y + sigma_sqrt_T) - 
+                              S * Math.exp(-r_f * T) * pow_term * normCDF(-y);
+          
+          price = vanilla_put - adjustment + barrier_term;
+        }
+      } else {
+        // Up-and-Out Put (reverse)
+        if (H <= K) {
+          // Barrier below or at strike: standard put price
+          price = calculatePutPrice(S, K, T, r_d, r_f, sigma);
+        } else {
+          // Barrier above strike: up-and-out put formula
+          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
+          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(h - sigma_sqrt_T) - 
+                              S * Math.exp(-r_f * T) * pow_term * normCDF(h);
+          
+          price = vanilla_put - barrier_term;
+        }
+      }
+    } else if (isKI) {
+      if (!isReverse) {
+        // Down-and-In Put (standard)
+        if (H >= K) {
+          // Barrier above or at strike: zero (never activated)
+          price = 0;
+        } else {
+          // Barrier below strike: down-and-in put formula
+          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
+          const adjustment = K * Math.exp(-r_d * T) * normCDF(-x + sigma_sqrt_T) - 
+                            S * Math.exp(-r_f * T) * normCDF(-x);
+          
+          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(-y + sigma_sqrt_T) - 
+                              S * Math.exp(-r_f * T) * pow_term * normCDF(-y);
+          
+          price = vanilla_put - (vanilla_put - adjustment + barrier_term);
+        }
+      } else {
+        // Up-and-In Put (reverse)
+        if (H <= K) {
+          // Barrier below or at strike: zero (never activated)
+          price = 0;
+        } else {
+          // Barrier above strike: up-and-in put formula
+          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
+          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(h - sigma_sqrt_T) - 
+                              S * Math.exp(-r_f * T) * pow_term * normCDF(h);
+          
+          price = barrier_term;
+        }
+      }
+    }
+  }
+  
+  // Adjust for quantity
+  return Math.max(0, price) * (quantity / 100);
 };
 
 // Monte Carlo simulation for barrier options
@@ -60,14 +264,29 @@ const calculateMonteCarloPrice = (
   lowerBarrier: number | undefined, maturity: number, r1: number, 
   r2: number, vol: number, quantity: number
 ) => {
-  // Monte Carlo parameters
-  const numSimulations = 10000; // Number of price paths to simulate
-  const numSteps = 252;         // Number of time steps (trading days in a year)
+  // Monte Carlo parameters - Augmenté pour plus de précision
+  const numSimulations = 5000; // Augmenté pour améliorer la précision (était 1000)
+  const numSteps = 252;        // Nombre de pas de simulation (jours de trading dans une année)
   const dt = maturity / numSteps;
   const drift = (r1 - r2 - 0.5 * vol * vol) * dt;
   const diffusion = vol * Math.sqrt(dt);
   
   let sumPayoffs = 0;
+  let pathCount = {
+    barrierHit: 0,
+    nonZeroPayoff: 0
+  };
+  
+  // Validation des barrières
+  if (upperBarrier !== undefined && upperBarrier <= 0) {
+    console.error("Invalid upper barrier value:", upperBarrier);
+    return 0;
+  }
+  
+  if (lowerBarrier !== undefined && lowerBarrier <= 0) {
+    console.error("Invalid lower barrier value:", lowerBarrier);
+    return 0;
+  }
   
   for (let i = 0; i < numSimulations; i++) {
     let currentSpot = spot;
@@ -81,29 +300,67 @@ const calculateMonteCarloPrice = (
       // Update spot price using geometric Brownian motion
       currentSpot = currentSpot * Math.exp(drift + diffusion * z);
       
-      // Check if barriers have been hit
+      // Check if barriers have been hit - Logique améliorée et corrigée
       if (isDouble && upperBarrier && lowerBarrier) {
-        if (currentSpot >= upperBarrier || currentSpot <= lowerBarrier) {
-          barrierHit = true;
-        }
-      } else if (upperBarrier) {
+        // Double barrier logic
         if (isReverse) {
-          if ((isCall && currentSpot <= upperBarrier) || (!isCall && currentSpot >= upperBarrier)) {
+          // Reverse double barrier: hit if outside range
+          if (currentSpot <= lowerBarrier || currentSpot >= upperBarrier) {
             barrierHit = true;
+            break; // Important: arrêter la simulation une fois la barrière touchée
           }
         } else {
-          if ((isCall && currentSpot >= upperBarrier) || (!isCall && currentSpot <= upperBarrier)) {
+          // Standard double barrier: hit if inside range
+          if (currentSpot >= lowerBarrier && currentSpot <= upperBarrier) {
             barrierHit = true;
+            break;
+          }
+        }
+      } else if (upperBarrier) {
+        // Single barrier logic - Corrigé pour correspondre aux conventions financières
+        if (isCall) {
+          if (isReverse) {
+            // Call Down (reverse): KO/KI if spot <= barrier
+            if (currentSpot <= upperBarrier) {
+              barrierHit = true;
+              break;
+            }
+          } else {
+            // Call Up (standard): KO/KI if spot >= barrier
+            if (currentSpot >= upperBarrier) {
+              barrierHit = true;
+              break;
+            }
+          }
+        } else { // isPut
+          if (isReverse) {
+            // Put Up (reverse): KO/KI if spot >= barrier
+            if (currentSpot >= upperBarrier) {
+              barrierHit = true;
+              break;
+            }
+          } else {
+            // Put Down (standard): KO/KI if spot <= barrier
+            if (currentSpot <= upperBarrier) {
+              barrierHit = true;
+              break;
+            }
           }
         }
       }
     }
     
-    // Calculate payoff
+    // Log barrières touchées pour le débogage
+    if (barrierHit) {
+      pathCount.barrierHit++;
+    }
+    
+    // Calculate payoff based on option type and barrier events
     let payoff = 0;
     
+    // Logique KO/KI améliorée
     if (isKO) {
-      // Knock-Out: payoff if barrier not hit
+      // Knock-Out: payoff si la barrière n'a pas été touchée
       if (!barrierHit) {
         if (isCall) {
           payoff = Math.max(0, currentSpot - strike);
@@ -111,8 +368,9 @@ const calculateMonteCarloPrice = (
           payoff = Math.max(0, strike - currentSpot);
         }
       }
+      // Si barrière touchée, le payoff reste à 0
     } else if (isKI) {
-      // Knock-In: payoff if barrier hit
+      // Knock-In: payoff si la barrière a été touchée
       if (barrierHit) {
         if (isCall) {
           payoff = Math.max(0, currentSpot - strike);
@@ -120,15 +378,30 @@ const calculateMonteCarloPrice = (
           payoff = Math.max(0, strike - currentSpot);
         }
       }
+      // Si barrière non touchée, le payoff reste à 0
+    } else {
+      // Cas de base (pas une option à barrière)
+      if (isCall) {
+        payoff = Math.max(0, currentSpot - strike);
+      } else if (isPut) {
+        payoff = Math.max(0, strike - currentSpot);
+      }
+    }
+    
+    if (payoff > 0) {
+      pathCount.nonZeroPayoff++;
     }
     
     sumPayoffs += payoff;
   }
   
-  // Average payoff discounted to present value
+  // Calcul du prix: moyenne des payoffs actualisée
   const price = Math.exp(-r1 * maturity) * sumPayoffs / numSimulations;
   
-  // Adjust for quantity
+  // Log pour débogage
+  console.log(`Barrier option pricing: type=${isCall ? 'call' : 'put'}${isKO ? '-KO' : isKI ? '-KI' : ''}, paths with barrier hit: ${pathCount.barrierHit}/${numSimulations}, paths with payoff: ${pathCount.nonZeroPayoff}/${numSimulations}`);
+  
+  // Ajuster pour la quantité
   return price * (quantity / 100);
 };
 
@@ -300,27 +573,34 @@ export const calculateCustomStrategyPayoff = (
   options.forEach(option => {
     const { type, actualStrike, actualUpperBarrier, actualLowerBarrier, quantity } = option;
     const quantityFactor = quantity / 100;
+    const isLong = quantityFactor > 0; // Positive quantity = long position (buying)
     let optionPayoff = 0;
     const isCall = type.includes("call");
     
-    // Special handling for vanilla calls
+    // Traitement des options vanille
     if (type === "call") {
-      // For a forex call, the effect on the rate is:
-      // - if spot > strike, we are protected at the strike level
-      // - if spot <= strike, the option has no effect
+      // Pour un call vanille:
+      // - Si spot > strike: le payoff est (spot - strike)
+      // - Si spot <= strike: le payoff est 0
       if (spotPrice > actualStrike) {
-        // The protection limits the rate at the strike
-        // We calculate the necessary adjustment
-        const adjustment = (spotPrice - actualStrike) * quantityFactor;
-        totalPayoff -= adjustment; // Subtract the excess above the strike
+        optionPayoff = spotPrice - actualStrike;
+        // Pour un long call (achat, quantityFactor > 0): un payoff positif RÉDUIT le taux effectif
+        // Pour un short call (vente, quantityFactor < 0): un payoff positif AUGMENTE le taux effectif
+        totalPayoff += optionPayoff * quantityFactor;
       }
     } 
-    // Other option types remain unchanged
     else if (type === "put") {
-      optionPayoff = Math.max(0, actualStrike - spotPrice);
-      totalPayoff += optionPayoff * (-1) * quantityFactor;
+      // Pour un put vanille:
+      // - Si spot < strike: le payoff est (strike - spot)
+      // - Si spot >= strike: le payoff est 0
+      if (spotPrice < actualStrike) {
+        optionPayoff = actualStrike - spotPrice;
+        // Pour un long put (achat, quantityFactor > 0): un payoff positif RÉDUIT le taux effectif
+        // Pour un short put (vente, quantityFactor < 0): un payoff positif AUGMENTE le taux effectif
+        totalPayoff += optionPayoff * quantityFactor;
+      }
     }
-    // Rest of the code for barrier options
+    // Traitement des options à barrière
     else if (type.includes("KO") && !type.includes("DKO")) {
       const isReverse = type.includes("Reverse");
       const barrier = actualUpperBarrier;
@@ -345,15 +625,17 @@ export const calculateCustomStrategyPayoff = (
       // If not KO, calculate payoff normally
       if (!isKnockOut) {
         if (isCall) {
-          // For a call, same logic as for vanilla call
+          // Pour un call
           if (spotPrice > actualStrike) {
-            const adjustment = (spotPrice - actualStrike) * quantityFactor;
-            totalPayoff -= adjustment;
+            optionPayoff = spotPrice - actualStrike;
+            totalPayoff += optionPayoff * quantityFactor;
           }
         } else {
-          // For a put, standard behavior
-          optionPayoff = Math.max(0, actualStrike - spotPrice);
-          totalPayoff += optionPayoff * (-1) * quantityFactor;
+          // Pour un put
+          if (spotPrice < actualStrike) {
+            optionPayoff = actualStrike - spotPrice;
+            totalPayoff += optionPayoff * quantityFactor;
+          }
         }
       }
     } 
@@ -382,15 +664,17 @@ export const calculateCustomStrategyPayoff = (
       // If KI activated, calculate payoff
       if (isKnockIn) {
         if (isCall) {
-          // For a call, same logic as for vanilla call
+          // Pour un call
           if (spotPrice > actualStrike) {
-            const adjustment = (spotPrice - actualStrike) * quantityFactor;
-            totalPayoff -= adjustment;
+            optionPayoff = spotPrice - actualStrike;
+            totalPayoff += optionPayoff * quantityFactor;
           }
         } else {
-          // For a put, standard behavior
-          optionPayoff = Math.max(0, actualStrike - spotPrice);
-          totalPayoff += optionPayoff * (-1) * quantityFactor;
+          // Pour un put
+          if (spotPrice < actualStrike) {
+            optionPayoff = actualStrike - spotPrice;
+            totalPayoff += optionPayoff * quantityFactor;
+          }
         }
       }
     } 
@@ -404,15 +688,17 @@ export const calculateCustomStrategyPayoff = (
       
       if (!isKnockOut) {
         if (isCall) {
-          // For a call, same logic as for vanilla call
+          // Pour un call
           if (spotPrice > actualStrike) {
-            const adjustment = (spotPrice - actualStrike) * quantityFactor;
-            totalPayoff -= adjustment;
+            optionPayoff = spotPrice - actualStrike;
+            totalPayoff += optionPayoff * quantityFactor;
           }
         } else {
-          // For a put, standard behavior
-          optionPayoff = Math.max(0, actualStrike - spotPrice);
-          totalPayoff += optionPayoff * (-1) * quantityFactor;
+          // Pour un put
+          if (spotPrice < actualStrike) {
+            optionPayoff = actualStrike - spotPrice;
+            totalPayoff += optionPayoff * quantityFactor;
+          }
         }
       }
     } 
@@ -426,19 +712,84 @@ export const calculateCustomStrategyPayoff = (
       
       if (isKnockIn) {
         if (isCall) {
-          // For a call, same logic as for vanilla call
+          // Pour un call
           if (spotPrice > actualStrike) {
-            const adjustment = (spotPrice - actualStrike) * quantityFactor;
-            totalPayoff -= adjustment;
+            optionPayoff = spotPrice - actualStrike;
+            totalPayoff += optionPayoff * quantityFactor;
           }
         } else {
-          // For a put, standard behavior
-          optionPayoff = Math.max(0, actualStrike - spotPrice);
-          totalPayoff += optionPayoff * (-1) * quantityFactor;
+          // Pour un put
+          if (spotPrice < actualStrike) {
+            optionPayoff = actualStrike - spotPrice;
+            totalPayoff += optionPayoff * quantityFactor;
+          }
         }
       }
     }
   });
   
   return totalPayoff;
+};
+
+// Helper function to calculate barrier option payoff
+export const calculateBarrierPayoff = (
+  component: any,
+  currentSpot: number,
+  basePayoff: number,
+  initialSpot: number
+) => {
+  const isKO = component.type.includes('KO');
+  const isKI = component.type.includes('KI');
+  const isReverse = component.type.includes('reverse');
+  
+  // Pour les options vanilla standard (non-barrière)
+  if (!isKO && !isKI) {
+    // Important: pour les options call/put classiques, calculer directement le payoff
+    if (component.type === 'call') {
+      const strikeRate = component.strikeType === 'percent' 
+        ? initialSpot * (component.strike / 100) 
+        : component.strike;
+      return Math.max(0, currentSpot - strikeRate);
+    } else if (component.type === 'put') {
+      const strikeRate = component.strikeType === 'percent' 
+        ? initialSpot * (component.strike / 100) 
+        : component.strike;
+      return Math.max(0, strikeRate - currentSpot);
+    }
+    return basePayoff; // Fallback
+  }
+  
+  // Déterminer les valeurs des barrières
+  const upperBarrier = component.upperBarrierType === 'percent' 
+    ? initialSpot * (component.upperBarrier / 100) 
+    : component.upperBarrier;
+    
+  const lowerBarrier = component.lowerBarrierType === 'percent'
+    ? initialSpot * (component.lowerBarrier / 100)
+    : component.lowerBarrier;
+  
+  const isDouble = upperBarrier !== undefined && lowerBarrier !== undefined;
+  
+  // Check if barrier is hit (for simulation purposes)
+  let barrierActive = 0.0;
+  
+  if (isDouble) {
+    barrierActive = isBarrierActive(currentSpot, upperBarrier, lowerBarrier, isReverse);
+  } else if (upperBarrier !== undefined) {
+    // Single barrier case
+    const isCall = component.type.includes('call');
+    barrierActive = isBarrierSingleActive(currentSpot, upperBarrier, isCall, isReverse);
+  }
+  
+  // Calculate payoff based on barrier type
+  if (isKO) {
+    // For KO options, payoff is 0 if barrier is hit
+    return barrierActive > 0.5 ? 0.0 : basePayoff;
+  } else if (isKI) {
+    // For KI options, payoff is positive only if barrier is hit
+    return barrierActive > 0.5 ? basePayoff : 0.0;
+  }
+  
+  // Fallback (should not reach here)
+  return basePayoff;
 };

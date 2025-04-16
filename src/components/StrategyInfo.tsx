@@ -128,6 +128,8 @@ const StrategyInfo = ({ selectedStrategy, results, params, name, description }: 
       switch(modelCode) {
         case BARRIER_PRICING_MODELS.MONTE_CARLO:
           return "Monte Carlo";
+        case BARRIER_PRICING_MODELS.CLOSED_FORM:
+          return "Closed-Form Analytical";
         default:
           return "Standard";
       }

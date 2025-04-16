@@ -309,7 +309,7 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
             <XAxis
               dataKey="spot"
               domain={["dataMin", "dataMax"]}
-              tickFormatter={(value) => (typeof value === 'number' && !isNaN(value) ? value.toFixed(2) : '')}
+              tickFormatter={(value) => value.toFixed(2)}
               label={{
                 value: "Exchange Rate",
                 position: "insideBottom",
@@ -317,7 +317,7 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
               }}
             />
             <YAxis
-              tickFormatter={(value) => (typeof value === 'number' && !isNaN(value) ? value.toFixed(2) : '')}
+              tickFormatter={(value) => value.toFixed(2)}
               domain={["dataMin - 0.05", "dataMax + 0.05"]}
             />
             <Tooltip content={<CustomTooltip 

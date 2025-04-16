@@ -83,6 +83,7 @@ export interface ForexResult {
   hedgedRevenue: number;
   pnlVsUnhedged: number;
   effectiveRate: number;
+  impliedVolatility?: number; // Optional implied volatility for per-month customization
 }
 
 interface SavedForexScenario {
@@ -125,6 +126,8 @@ interface RealRateParams {
     useSimulation: boolean;
     volatility: number;
     numSimulations: number;
+    additionalDrift: number; // Tendance annuelle supplémentaire en %
+    ignoreDriftFromRates: boolean; // Ignorer le drift lié aux taux d'intérêt
 }
 
 export interface RiskMatrixResult {
@@ -224,6 +227,8 @@ const Index = () => {
     useSimulation: false,
     volatility: 15.0, // Increased default from lower value
     numSimulations: 1000, // Increased default from lower value
+    additionalDrift: 0, // Tendance annuelle supplémentaire en %
+    ignoreDriftFromRates: false, // Ignorer le drift lié aux taux d'intérêt
   });
 
   const [strategy, setStrategy] = useState<StrategyComponent[]>(() => {
@@ -305,6 +310,10 @@ const Index = () => {
   // Add state for original parameters during stress testing
   const [originalParams, setOriginalParams] = useState<ForexParams | null>(null);
   const [originalRealRateParams, setOriginalRealRateParams] = useState<RealRateParams | null>(null);
+
+  const [activeScenarioKey, setActiveScenarioKey] = useState<string | null>(null);
+  const [useImpliedVolatility, setUseImpliedVolatility] = useState<boolean>(false);
+  const [usePremiumOverride, setUsePremiumOverride] = useState<boolean>(false);
 
   // --- Calculations for Summary Statistics ---
   const totalSummaryStats = useMemo(() => {
@@ -439,45 +448,78 @@ const Index = () => {
     const maxTime = Math.max(...timePoints, 0.1); // At least 0.1 years for short periods
     const numSteps = Math.max(100, Math.ceil(100 * maxTime)); // At least 100 steps
     const dt = maxTime / numSteps;
-    const drift = r_d - r_f;
     
-    console.log(`Monte Carlo simulation parameters: maxTime=${maxTime}, numSteps=${numSteps}, dt=${dt}, drift=${drift}, volatility=${volatility}`);
+    // Apply additional drift from user input (converted from percentage to decimal)
+    const additionalDriftDecimal = realRateParams.additionalDrift / 100;
     
-    // Step 3: Initialize paths with initial spot rate
+    // MODIFICATION: Simulation véritablement aléatoire quand ignoreDriftFromRates est activé
     const paths: number[][] = [];
-    for (let i = 0; i < numSimulations; i++) {
-      paths.push([spotRate]);
-    }
     
-    // Step 4: Generate full paths using correct GBM
-    for (let i = 0; i < numSimulations; i++) {
-      let currentRate = spotRate;
+    if (realRateParams.ignoreDriftFromRates) {
+      console.log("Generating PURE RANDOM paths (ignoring standard financial model)");
       
-      for (let step = 1; step <= numSteps; step++) {
-        // Generate standard normal random number using Box-Muller
-        const u1 = Math.random();
-        const u2 = Math.random();
-        const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+      // Amplifier la volatilité pour des mouvements plus visibles
+      const enhancedVolatility = volatility * 2;
+      
+      for (let i = 0; i < numSimulations; i++) {
+        // Initialiser le premier point au taux spot
+        const path = [spotRate];
+        let currentRate = spotRate;
         
-        // Apply GBM formula correctly: S(t+dt) = S(t) * exp((drift - 0.5*vol^2)*dt + vol*sqrt(dt)*Z)
-        currentRate = currentRate * Math.exp(
-          (drift - 0.5 * volatility * volatility) * dt + 
-          volatility * Math.sqrt(dt) * z
-        );
+        // Génération d'une marche aléatoire pure
+        for (let step = 1; step <= numSteps; step++) {
+          // Génération de nombre aléatoire avec distribution plus large
+          const u1 = Math.random();
+          const u2 = Math.random();
+          const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+          
+          // Calcul de la variation aléatoire avec tendance additionelle seulement
+          // Pas de terme de correction -0.5*vol^2, pas de drift lié aux taux d'intérêt
+          const randomChange = additionalDriftDecimal * dt + enhancedVolatility * Math.sqrt(dt) * z;
+          
+          // Application de la variation directement (mode additif au lieu de multiplicatif)
+          // pour augmenter l'impact des mouvements aléatoires
+          const percentChange = Math.exp(randomChange) - 1;
+          currentRate = currentRate * (1 + percentChange);
+          
+          // Protection contre les valeurs négatives ou extrêmement élevées
+          currentRate = Math.max(currentRate, spotRate * 0.5);
+          currentRate = Math.min(currentRate, spotRate * 2.0);
+          
+          path.push(currentRate);
+        }
+        paths.push(path);
+      }
+    } else {
+      // Mode standard avec mouvement brownien géométrique
+      console.log("Using standard Geometric Brownian Motion with drift from interest rates");
+      const drift = (r_d - r_f - 0.5 * volatility * volatility + additionalDriftDecimal) * dt;
+      
+      // Step 3: Initialize paths with initial spot rate
+      for (let i = 0; i < numSimulations; i++) {
+        paths.push([spotRate]);
+      }
+      
+      // Step 4: Generate full paths using correct GBM
+      for (let i = 0; i < numSimulations; i++) {
+        let currentRate = spotRate;
         
-        paths[i].push(currentRate);
+        for (let step = 1; step <= numSteps; step++) {
+          // Generate standard normal random number using Box-Muller
+          const u1 = Math.random();
+          const u2 = Math.random();
+          const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+          
+          // Apply GBM formula correctly: S(t+dt) = S(t) * exp((drift - 0.5*vol^2)*dt + vol*sqrt(dt)*Z)
+          // Note: drift already includes the -0.5*vol^2 term and dt
+          currentRate = currentRate * Math.exp(drift + volatility * Math.sqrt(dt) * z);
+          
+          paths[i].push(currentRate);
+        }
       }
     }
     
-    // Step 5: Calculate the closest index in our paths for each month's time point
-    const monthlyIndices: number[] = [];
-    for (let i = 0; i < timePoints.length; i++) {
-      const timePoint = timePoints[i];
-      const exactIndex = Math.round((timePoint / maxTime) * numSteps);
-      const validIndex = Math.min(exactIndex, numSteps); // Ensure index is within bounds
-      monthlyIndices.push(validIndex);
-      console.log(`Month ${i+1}: timePoint=${timePoint.toFixed(4)} years, path index=${validIndex}`);
-    }
+    console.log(`Monte Carlo simulation parameters: maxTime=${maxTime}, numSteps=${numSteps}, dt=${dt}, enhancedRandomness=${realRateParams.ignoreDriftFromRates}, additionalDrift=${additionalDriftDecimal}`);
     
     // Log some debug info
     if (paths.length > 0) {
@@ -495,8 +537,18 @@ const Index = () => {
       console.log(`Range of final rates: Min=${min.toFixed(4)}, Max=${max.toFixed(4)}, Spread=${(max-min).toFixed(4)}`);
     }
     
+    // Step 5: Calculate the closest index in our paths for each month's time point
+    const monthlyIndices: number[] = [];
+    for (let i = 0; i < timePoints.length; i++) {
+      const timePoint = timePoints[i];
+      const exactIndex = Math.round((timePoint / maxTime) * numSteps);
+      const validIndex = Math.min(exactIndex, numSteps); // Ensure index is within bounds
+      monthlyIndices.push(validIndex);
+      console.log(`Month ${i+1}: timePoint=${timePoint.toFixed(4)} years, path index=${validIndex}`);
+    }
+    
     return { paths, monthlyIndices };
-  }, []);
+  }, [realRateParams]); // Important: ajout de realRateParams comme dépendance pour useCallback
 
   const calculatePricesFromPaths_ForexMC = (
     optionType: string, S: number, K: number, r_d: number, r_f: number, t: number,
@@ -555,24 +607,59 @@ const Index = () => {
     basePayoff: number,
     initialSpotRateForStrike: number
   ): number => {
-    if (!instrument.type.includes('knockout') && !instrument.type.includes('knockin')) {
+    // Vérifier si c'est une option à barrière
+    const isKO = instrument.type.includes('KO');
+    const isKI = instrument.type.includes('KI');
+    
+    if (!isKO && !isKI) {
+        // Si ce n'est pas une option à barrière, retourner simplement le payoff de base
         return basePayoff;
     }
 
-    const strikeRate = instrument.strikeType === 'percent'
-        ? initialSpotRateForStrike * (instrument.strike / 100)
-        : instrument.strike;
-
-    let isActive = true;
-    if (instrument.type.includes('knockout')) {
-        isActive = true;
-        if (strikeRate >= realRate) isActive = false;
-    } else if (instrument.type.includes('knockin')) {
-        isActive = false;
-        if (strikeRate <= realRate) isActive = true;
+    // Déterminer les valeurs réelles des barrières
+    let barrierHit = false;
+    
+    if (instrument.upperBarrier !== undefined) {
+        const upperBarrierValue = instrument.upperBarrierType === 'percent'
+            ? initialSpotRateForStrike * (instrument.upperBarrier / 100)
+            : instrument.upperBarrier;
+            
+        // Barrière supérieure touchée si le prix > barrière supérieure
+        barrierHit = realRate >= upperBarrierValue;
+    } 
+    else if (instrument.lowerBarrier !== undefined) {
+        const lowerBarrierValue = instrument.lowerBarrierType === 'percent'
+            ? initialSpotRateForStrike * (instrument.lowerBarrier / 100)
+            : instrument.lowerBarrier;
+            
+        // Barrière inférieure touchée si le prix < barrière inférieure
+        barrierHit = realRate <= lowerBarrierValue;
+    }
+    else {
+        // Cas de barrière non spécifiée, on utilise le strike comme proxy de la barrière
+        const strikeRate = instrument.strikeType === 'percent'
+            ? initialSpotRateForStrike * (instrument.strike / 100)
+            : instrument.strike;
+            
+        // Par défaut pour KO Call: barrière supérieure, KO Put: barrière inférieure
+        if (instrument.type.includes('call')) {
+            barrierHit = realRate >= strikeRate;
+        } else {
+            barrierHit = realRate <= strikeRate;
+        }
     }
 
-    return isActive ? basePayoff : 0;
+    // Appliquer la logique de la barrière
+    if (isKO) {
+        // Knock-Out: Si la barrière est touchée, l'option disparaît (payoff = 0)
+        return barrierHit ? 0 : basePayoff;
+    } else if (isKI) {
+        // Knock-In: Si la barrière est touchée, l'option s'active (sinon payoff = 0)
+        return barrierHit ? basePayoff : 0;
+    }
+
+    // Fallback (ne devrait pas arriver)
+    return basePayoff;
   };
 
   const erf = (x: number): number => {
@@ -931,8 +1018,20 @@ const Index = () => {
 
         // --- Common Result Calculation --- START
         const unhedgedRevenue = monthlyVolume * realRate;
-        const premiumPaid = monthlyVolume * totalPremiumPerUnit;
-        const payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
+        let premiumPaid = monthlyVolume * totalPremiumPerUnit;
+        let payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
+        
+        // Recalculer correctement pour les options vanille standard
+        if (selectedStrategy === 'call') {
+            // Pour un call, le payoff est positif si le taux réel > strike
+            totalPayoffPerUnit = Math.max(0, realRate - params.strikeUpper) * (params.optionQuantity || 100) / 100;
+            payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
+        } else if (selectedStrategy === 'put') {
+            // Pour un put, le payoff est positif si le taux réel < strike
+            totalPayoffPerUnit = Math.max(0, params.strikeLower - realRate) * (params.optionQuantity || 100) / 100;
+            payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
+        }
+        
         const hedgedRevenue = unhedgedRevenue + payoffFromHedge - premiumPaid;
         const pnlVsUnhedged = payoffFromHedge - premiumPaid;
         const effectiveRate = monthlyVolume === 0 ? realRate : hedgedRevenue / monthlyVolume;
@@ -992,30 +1091,55 @@ const Index = () => {
         const currentSpot = spot - range + i * step; // The spot rate for this point on the X-axis
         let premiumCost = 0;
         let payoffAtSpot = 0;
-        const optionDetailsForChart: any = {}; // For chart reference lines
+        const optionDetailsForChart = {}; // For chart reference lines
 
         if (selectedStrategy === 'custom') {
             // --- Custom Strategy Payoff for Chart --- START
             customStrategyComponents.forEach((comp, idx) => {
-                 const strikeRate = comp.strikeType === 'percent' ? initialS * (comp.strike / 100) : comp.strike;
-                 const componentVol = (comp.volatility || vol * 100) / 100;
-                 const quantityFactor = comp.quantity / 100;
-                 let componentPremium = 0;
+                const strikeRate = comp.strikeType === 'percent' ? initialS * (comp.strike / 100) : comp.strike;
+                const componentVol = (comp.volatility || vol * 100) / 100;
+                // Important: Apply the sign of the quantity to identify buy vs sell
+                const quantityFactor = comp.quantity / 100;
+                const isLongPosition = quantityFactor > 0;
+                let componentPremium = 0;
 
-                 // Premium (calculated at current 'spot')
-                 if (comp.type === 'call' || comp.type === 'put') { componentPremium = calculateOptionPrice_GarmanKohlhagen(comp.type, spot, strikeRate, r_d, r_f, t, componentVol) * quantityFactor; }
-                 else if (comp.type.includes('knock')) { componentPremium = calculateOptionPrice_GarmanKohlhagen(comp.type.includes('call') ? 'call' : 'put', spot, strikeRate, r_d, r_f, t, componentVol) * quantityFactor; }
-                 premiumCost += isNaN(componentPremium) ? 0 : componentPremium;
+                // Premium (calculated at current 'spot')
+                if (comp.type === 'call' || comp.type === 'put') { 
+                    componentPremium = calculateOptionPrice_GarmanKohlhagen(comp.type, spot, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor); 
+                }
+                else if (comp.type.includes('knock')) { 
+                    componentPremium = calculateOptionPrice_GarmanKohlhagen(comp.type.includes('call') ? 'call' : 'put', spot, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor); 
+                }
+                
+                // For a long position (buying), premium is negative; for short (selling), premium is positive
+                premiumCost += isNaN(componentPremium) ? 0 : (isLongPosition ? -componentPremium : componentPremium);
 
-                 // Payoff (calculated at 'currentSpot' on the chart's x-axis)
-                 const basePayoff = comp.type.includes('call') ? Math.max(0, currentSpot - strikeRate) : Math.max(0, strikeRate - currentSpot);
-                 const componentPayoff = calculateBarrierPayoff(comp, currentSpot, basePayoff, initialS) * quantityFactor;
-                 payoffAtSpot += isNaN(componentPayoff) ? 0 : componentPayoff;
+                // Calculate the base payoff for the option
+                let basePayoff = 0;
+                if (comp.type.includes('call')) {
+                    basePayoff = Math.max(0, currentSpot - strikeRate);
+                } else if (comp.type.includes('put')) {
+                    basePayoff = Math.max(0, strikeRate - currentSpot);
+                }
+                
+                // Apply barrier logic if needed
+                const componentPayoff = calculateBarrierPayoff(comp, currentSpot, basePayoff, initialS);
+                
+                // Apply quantity - maintain the sign to correctly reflect buy/sell
+                payoffAtSpot += isNaN(componentPayoff) ? 0 : (componentPayoff * quantityFactor);
 
                 // Store details for chart reference lines
-                 optionDetailsForChart[`${comp.type}_${idx}_Strike`] = strikeRate;
-                 if (comp.upperBarrier) { optionDetailsForChart[`${comp.type}_${idx}_UpperBarrier`] = comp.upperBarrierType === 'percent' ? initialS * (comp.upperBarrier / 100) : comp.upperBarrier; }
-                 if (comp.lowerBarrier) { optionDetailsForChart[`${comp.type}_${idx}_LowerBarrier`] = comp.lowerBarrierType === 'percent' ? initialS * (comp.lowerBarrier / 100) : comp.lowerBarrier; }
+                optionDetailsForChart[`${comp.type}_${idx}_Strike`] = strikeRate;
+                if (comp.upperBarrier) { 
+                    optionDetailsForChart[`${comp.type}_${idx}_Upper Barrier`] = comp.upperBarrierType === 'percent' 
+                        ? initialS * (comp.upperBarrier / 100) 
+                        : comp.upperBarrier; 
+                }
+                if (comp.lowerBarrier) { 
+                    optionDetailsForChart[`${comp.type}_${idx}_Lower Barrier`] = comp.lowerBarrierType === 'percent' 
+                        ? initialS * (comp.lowerBarrier / 100) 
+                        : comp.lowerBarrier; 
+                }
             });
             // --- Custom Strategy Payoff for Chart --- END
         } else {
@@ -1027,49 +1151,51 @@ const Index = () => {
                     optionDetailsForChart['Forward Rate'] = chartForwardRate; 
                     break;
                 case 'call': 
-                    premiumCost = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * quantityFactor; 
+                    // For a long call, the premium is negative (cost)
+                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * quantityFactor; 
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     break;
                 case 'put': 
-                    premiumCost = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * quantityFactor; 
+                    // For a long put, the premium is negative (cost)
+                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * quantityFactor; 
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     break;
-                case 'collarPut': case 'collarCall': 
+                case 'collarPut':
                     // For zero cost collars, the premiums should offset each other
                     const putCollarPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol);
                     const callCollarPremium = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol);
-                    premiumCost = putCollarPremium - callCollarPremium; // Should be near zero for properly structured collar
+                    premiumCost = -(putCollarPremium - callCollarPremium); // Should be near zero for properly structured collar
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     break;
                 case 'callKO': 
                     // Approximate KO premium using vanilla option price adjusted
-                    premiumCost = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * 0.7; // Adjust factor
+                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * 0.7 * quantityFactor; // Adjust factor
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     optionDetailsForChart['KO Barrier'] = barrierUpper; 
                     break;
                 case 'putKI': 
                     // Approximate KI premium using vanilla option price adjusted
-                    premiumCost = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * 0.7; // Adjust factor
+                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * 0.7 * quantityFactor; // Adjust factor
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     optionDetailsForChart['KI Barrier'] = barrierLower; 
                     break;
                 case 'strangle': 
-                    premiumCost = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) 
-                                + calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol); 
+                    premiumCost = -(calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) 
+                                + calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol)) * quantityFactor;
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     break;
                 case 'straddle': 
-                    premiumCost = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeMid, r_d, r_f, t, vol) 
-                                + calculateOptionPrice_GarmanKohlhagen('call', spot, strikeMid, r_d, r_f, t, vol); 
+                    premiumCost = -(calculateOptionPrice_GarmanKohlhagen('put', spot, strikeMid, r_d, r_f, t, vol) 
+                                + calculateOptionPrice_GarmanKohlhagen('call', spot, strikeMid, r_d, r_f, t, vol)) * quantityFactor; 
                     optionDetailsForChart['Strike'] = strikeMid; 
                     break;
                 case 'seagull':
                     const buyPutPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeMid, r_d, r_f, t, vol);
                     const sellCallPremium = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol);
                     const sellPutPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol);
-                    premiumCost = buyPutPremium - sellCallPremium - sellPutPremium;
+                    premiumCost = -(buyPutPremium - sellCallPremium - sellPutPremium) * quantityFactor;
                     optionDetailsForChart['Buy Put Strike'] = strikeMid; 
                     optionDetailsForChart['Sell Call Strike'] = strikeUpper; 
                     optionDetailsForChart['Sell Put Strike'] = strikeLower;
@@ -1078,7 +1204,7 @@ const Index = () => {
                     // Approximating complex barrier structure with adjusted pricing
                     const callKOPremium = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * 0.7;
                     const putKIPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * 0.7;
-                    premiumCost = callKOPremium + putKIPremium;
+                    premiumCost = -(callKOPremium + putKIPremium) * quantityFactor;
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     optionDetailsForChart['Upper Barrier (KO)'] = barrierUpper; 
@@ -1089,40 +1215,44 @@ const Index = () => {
              }
 
              // Calculate Payoff (at 'currentSpot' on the chart's x-axis)
+             // IMPORTANT: We're calculating from the perspective of managing FX risk (buying options)
              switch (selectedStrategy) {
                  case 'forward': 
                      payoffAtSpot = chartForwardRate - currentSpot; 
                      break;
                  case 'call': 
+                     // Long call: we gain when spot > strike (pay strike instead of spot)
                      payoffAtSpot = Math.max(0, currentSpot - strikeUpper) * quantityFactor; 
                      break;
                  case 'put': 
+                     // Long put: we gain when spot < strike (pay strike instead of spot)
                      payoffAtSpot = Math.max(0, strikeLower - currentSpot) * quantityFactor; 
                      break;
                  case 'collarPut': case 'collarCall': 
+                     // Long put, short call: gain on downside, lose on upside
                      payoffAtSpot = Math.max(0, strikeLower - currentSpot) - Math.max(0, currentSpot - strikeUpper); 
                      break;
                  case 'callKO': 
-                     payoffAtSpot = (currentSpot < barrierUpper) ? Math.max(0, currentSpot - strikeUpper) : 0; 
+                     payoffAtSpot = (currentSpot < barrierUpper) ? Math.max(0, currentSpot - strikeUpper) * quantityFactor : 0; 
                      break;
                  case 'putKI': 
-                     payoffAtSpot = (currentSpot < barrierLower) ? Math.max(0, strikeLower - currentSpot) : 0; 
+                     payoffAtSpot = (currentSpot < barrierLower) ? Math.max(0, strikeLower - currentSpot) * quantityFactor : 0; 
                      break;
                  case 'strangle': 
-                     payoffAtSpot = Math.max(0, strikeLower - currentSpot) + Math.max(0, currentSpot - strikeUpper); 
+                     payoffAtSpot = (Math.max(0, strikeLower - currentSpot) + Math.max(0, currentSpot - strikeUpper)) * quantityFactor; 
                      break;
                  case 'straddle': 
-                     payoffAtSpot = Math.max(0, strikeMid - currentSpot) + Math.max(0, currentSpot - strikeMid); 
+                     payoffAtSpot = (Math.max(0, strikeMid - currentSpot) + Math.max(0, currentSpot - strikeMid)) * quantityFactor; 
                      break;
-                 case 'seagull': // Buy Put(Mid), Sell Call(Upper), Sell Put(Lower)
-                     payoffAtSpot = Math.max(0, strikeMid - currentSpot) 
+                 case 'seagull': 
+                     payoffAtSpot = (Math.max(0, strikeMid - currentSpot) 
                                    - Math.max(0, currentSpot - strikeUpper) 
-                                   - Math.max(0, strikeLower - currentSpot);
+                                   - Math.max(0, strikeLower - currentSpot)) * quantityFactor;
                      break;
-                 case 'callPutKI_KO': // Call KO (Upper Barrier) + Put KI (Lower Barrier)
+                 case 'callPutKI_KO': 
                      const callKOPayoffChart = (currentSpot < barrierUpper) ? Math.max(0, currentSpot - strikeUpper) : 0;
                      const putKIPayoffChart = (currentSpot < barrierLower) ? Math.max(0, strikeLower - currentSpot) : 0;
-                     payoffAtSpot = callKOPayoffChart + putKIPayoffChart;
+                     payoffAtSpot = (callKOPayoffChart + putKIPayoffChart) * quantityFactor;
                      break;
                  default: 
                      payoffAtSpot = 0;
@@ -1131,20 +1261,42 @@ const Index = () => {
         }
 
         // --- Common Payoff Data Point Creation --- START
-        const hedgedRate = currentSpot + payoffAtSpot;
-        const hedgedRateWithPremium = hedgedRate - premiumCost;
-        const dataPoint: any = {
+        // La payoffAtSpot représente le gain/perte sur l'option en terme de prime par unité
+        // Pour le taux hedgé, dans un contexte FX, il faut ajouter ce payoff au taux spot pour un importateur
+        // et le soustraire pour un exportateur. Par défaut, nous considérons la perspective d'un importateur.
+        
+        // Par convention, pour un importateur (qui achète la devise étrangère):
+        // - Un call protège contre la hausse de taux (si le taux monte, l'option compense)
+        // - Un put protège contre la baisse de taux (si le taux baisse, on exerce l'option pour vendre au strike)
+        
+        // Hedged rate est le taux "effectif" après application des gains/pertes de l'option
+        // CORRIGÉ: Pour un acheteur de devise (importateur), le payoff positif RÉDUIT le taux effectif
+        const hedgedRateWithoutPremium = currentSpot - payoffAtSpot;
+        
+        // Hedged rate avec premium inclut le coût de la prime
+        // Pour les valeurs négatives de premiumCost (coût), cela augmente le taux effectif
+        const hedgedRateWithPremium = hedgedRateWithoutPremium - premiumCost;
+        
+        // Build the data point object exactly as expected by PayoffChart component
+        const dataPoint = {
             spot: currentSpot,
             "Unhedged Rate": currentSpot,
-            "Hedged Rate": includePremium ? hedgedRateWithPremium : hedgedRate,
-            ...(includePremium ? { "Hedged Rate (No Premium)": hedgedRate } : { "Hedged Rate with Premium": hedgedRateWithPremium }),
+            // Apply includePremium logic - if includePremium is true, show rate with premium cost included
+            "Hedged Rate": includePremium ? hedgedRateWithPremium : hedgedRateWithoutPremium,
+            // Add comparison line based on includePremium setting (opposite value)
+            ...(includePremium 
+                ? { "Hedged Rate (No Premium)": hedgedRateWithoutPremium } 
+                : { "Hedged Rate with Premium": hedgedRateWithPremium }),
+            // Add reference lines for strikes and barriers
             ...optionDetailsForChart
         };
+        
         data.push(dataPoint);
         // --- Common Payoff Data Point Creation --- END
     }
+    
     setPayoffData(data);
-    console.log("Payoff data calculated:", data);
+    console.log("Payoff data calculated for chart:", data.length, "points");
   };
 
   const applyStressTest = (key: string) => {
@@ -1295,6 +1447,8 @@ const Index = () => {
         useSimulation: false,
         volatility: 15.0, // Increased default from lower value
         numSimulations: 1000, // Increased default from lower value
+        additionalDrift: 0, // Tendance annuelle supplémentaire en %
+        ignoreDriftFromRates: false, // Ignorer le drift lié aux taux d'intérêt
     });
     setActiveStressTestKey(null);
     setStressTestScenarios(DEFAULT_FOREX_SCENARIOS);
@@ -1386,6 +1540,276 @@ const Index = () => {
   const currentPairData = FOREX_PAIRS[selectedPair];
   const baseCurrency = selectedPair.split('/')[0];
   const quoteCurrency = selectedPair.split('/')[1];
+
+  // Modifier la fonction handleRateChange pour prendre en compte les changements de Premium/Unit
+  const handleRateChange = (index: number, field: 'forwardRate' | 'realRate' | 'impliedVolatility' | 'strategyPrice', value: string) => {
+    // Vérifier que la valeur est un nombre valide
+    const newValue = parseFloat(value);
+    if (isNaN(newValue) || (field !== 'impliedVolatility' && field !== 'strategyPrice' && newValue <= 0) || (field === 'impliedVolatility' && newValue < 0)) return;
+
+    // Créer une copie de l'array des résultats
+    const updatedResults = [...results];
+    
+    // Mettre à jour le taux spécifié
+    if (field === 'impliedVolatility') {
+      // Si le champ n'existe pas encore, créons-le
+      if (updatedResults[index].impliedVolatility === undefined) {
+        updatedResults[index].impliedVolatility = newValue;
+      } else {
+        updatedResults[index].impliedVolatility = newValue;
+      }
+    } else if (field === 'strategyPrice') {
+      // Mettre à jour directement le prix de la stratégie (prime par unité)
+      updatedResults[index].strategyPrice = newValue;
+      
+      // Recalculer les montants basés sur la nouvelle prime
+      const monthlyVolume = updatedResults[index].monthlyVolume;
+      const premiumPaid = monthlyVolume * newValue;
+      
+      // Mettre à jour la prime payée
+      updatedResults[index].premiumPaid = premiumPaid;
+      
+      // Recalculer les revenus couverts et le P&L
+      const payoffFromHedge = updatedResults[index].payoffFromHedge;
+      updatedResults[index].hedgedRevenue = updatedResults[index].unhedgedRevenue + payoffFromHedge - premiumPaid;
+      updatedResults[index].pnlVsUnhedged = payoffFromHedge - premiumPaid;
+      
+      // Recalculer le taux effectif
+      updatedResults[index].effectiveRate = monthlyVolume === 0 ? updatedResults[index].realRate : updatedResults[index].hedgedRevenue / monthlyVolume;
+    } else {
+      updatedResults[index][field] = newValue;
+    }
+    
+    // Récupérer les données courantes de la ligne
+    const row = updatedResults[index];
+    const monthlyVolume = row.monthlyVolume;
+    const t = row.timeToMaturity;
+    const S = params.spotRate; // Spot rate pour le calcul des primes
+    const r_d = params.domesticRate / 100;
+    const r_f = params.foreignRate / 100;
+    
+    // Si c'est la volatilité qui a changé, recalculer les primes (sauf si le premium est en override)
+    if (field === 'impliedVolatility' && !usePremiumOverride) {
+      let totalPremiumPerUnit = 0;
+      const vol = newValue / 100; // La volatilité est en pourcentage, la convertir en décimal
+      
+      if (selectedStrategy === 'custom') {
+        // Pour une stratégie personnalisée, recalculer pour chaque composant
+        customStrategyComponents.forEach(comp => {
+          const strikeRate = comp.strikeType === 'percent' 
+            ? initialSpotRate * (comp.strike / 100) 
+            : comp.strike;
+          const quantityFactor = comp.quantity / 100;
+          let premium = 0;
+          
+          // Recalculer la prime avec la nouvelle volatilité
+          if (comp.type === 'call' || comp.type === 'put') {
+            premium = calculateOptionPrice_GarmanKohlhagen(
+              comp.type as 'call' | 'put', 
+              S, 
+              strikeRate, 
+              r_d, 
+              r_f, 
+              t, 
+              vol
+            ) * quantityFactor;
+          } else if (comp.type.includes('KO') || comp.type.includes('KI')) {
+            // Pour les options à barrière, on approxime avec un facteur de réduction
+            const baseOption = comp.type.includes('call') ? 'call' : 'put';
+            premium = calculateOptionPrice_GarmanKohlhagen(
+              baseOption as 'call' | 'put',
+              S,
+              strikeRate,
+              r_d,
+              r_f,
+              t,
+              vol
+            ) * 0.7 * quantityFactor; // Facteur de réduction pour les barrières
+          }
+          
+          if (!isNaN(premium)) {
+            totalPremiumPerUnit += premium;
+          }
+        });
+      } else {
+        // Pour les stratégies standards
+        const strikeUpper = params.strikeUpper || params.spotRate * 1.05;
+        const strikeLower = params.strikeLower || params.spotRate * 0.95;
+        const strikeMid = params.strikeMid || params.spotRate;
+        const optionQuantity = params.optionQuantity || 100;
+        
+        switch (selectedStrategy) {
+          case 'forward':
+            totalPremiumPerUnit = 0; // Les forwards n'ont pas de prime
+            break;
+          case 'call':
+            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * (optionQuantity / 100);
+            break;
+          case 'put':
+            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * (optionQuantity / 100);
+            break;
+          case 'collarPut':
+          case 'collarCall':
+            // Zero-cost collar
+            const putCollarPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
+            const callCollarPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
+            totalPremiumPerUnit = putCollarPremium - callCollarPremium;
+            break;
+          case 'callKO':
+            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
+            break;
+          case 'putKI':
+            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
+            break;
+          case 'strangle':
+            const stranglePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
+            const strangleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
+            totalPremiumPerUnit = stranglePutPremium + strangleCallPremium;
+            break;
+          case 'straddle':
+            const straddlePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, vol);
+            const straddleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeMid, r_d, r_f, t, vol);
+            totalPremiumPerUnit = straddlePutPremium + straddleCallPremium;
+            break;
+          case 'seagull':
+            const seagullPutBuyPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, vol);
+            const seagullCallSellPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
+            const seagullPutSellPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
+            totalPremiumPerUnit = seagullPutBuyPremium - seagullCallSellPremium - seagullPutSellPremium;
+            break;
+          case 'callPutKI_KO':
+            const callKOPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
+            const putKIPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
+            totalPremiumPerUnit = callKOPremium + putKIPremium;
+            break;
+          default:
+            totalPremiumPerUnit = 0;
+        }
+      }
+      
+      // Mettre à jour la prime et les valeurs associées
+      updatedResults[index].strategyPrice = totalPremiumPerUnit;
+      const premiumPaid = monthlyVolume * totalPremiumPerUnit;
+      updatedResults[index].premiumPaid = premiumPaid;
+      
+      // Recalculer les valeurs qui dépendent de la prime
+      const payoffFromHedge = updatedResults[index].payoffFromHedge;
+      updatedResults[index].hedgedRevenue = updatedResults[index].unhedgedRevenue + payoffFromHedge - premiumPaid;
+      updatedResults[index].pnlVsUnhedged = payoffFromHedge - premiumPaid;
+      updatedResults[index].effectiveRate = monthlyVolume === 0 ? updatedResults[index].realRate : updatedResults[index].hedgedRevenue / monthlyVolume;
+    }
+    
+    // Recalculer payoff en fonction du nouveau taux réel (si c'est le real rate qui est modifié)
+    if (field === 'realRate') {
+      let totalPayoffPerUnit = 0;
+      
+      if (selectedStrategy === 'custom') {
+        // Pour une stratégie personnalisée, recalculer pour chaque composant
+        totalPayoffPerUnit = 0; // Réinitialiser
+        customStrategyComponents.forEach(comp => {
+          const strikeRate = comp.strikeType === 'percent' 
+            ? initialSpotRate * (comp.strike / 100) 
+            : comp.strike;
+          const quantityFactor = comp.quantity / 100;
+          
+          // Calculer le payoff de base en fonction du nouveau taux réel
+          const basePayoff = comp.type.includes('call') 
+            ? Math.max(0, newValue - strikeRate) 
+            : Math.max(0, strikeRate - newValue);
+          
+          // Appliquer les effets de barrière si nécessaire
+          const componentPayoff = calculateBarrierPayoff(comp, newValue, basePayoff, initialSpotRate) * quantityFactor;
+          
+          if (!isNaN(componentPayoff)) {
+            totalPayoffPerUnit += componentPayoff;
+          }
+        });
+      } else {
+        // Pour les stratégies standards
+        const strikeUpper = params.strikeUpper || params.spotRate * 1.05;
+        const strikeLower = params.strikeLower || params.spotRate * 0.95;
+        const strikeMid = params.strikeMid || params.spotRate;
+        const barrierUpper = params.barrierUpper || params.spotRate * 1.10;
+        const barrierLower = params.barrierLower || params.spotRate * 0.90;
+        const optionQuantity = params.optionQuantity || 100;
+        
+        switch (selectedStrategy) {
+          case 'forward':
+            totalPayoffPerUnit = row.forwardRate - newValue;
+            break;
+          case 'call':
+            totalPayoffPerUnit = Math.max(0, newValue - strikeUpper) * (optionQuantity / 100);
+            break;
+          case 'put':
+            totalPayoffPerUnit = Math.max(0, strikeLower - newValue) * (optionQuantity / 100);
+            break;
+          case 'collarPut':
+          case 'collarCall':
+            totalPayoffPerUnit = Math.max(0, strikeLower - newValue) - Math.max(0, newValue - strikeUpper);
+            break;
+          case 'callKO':
+            totalPayoffPerUnit = (newValue < barrierUpper) ? Math.max(0, newValue - strikeUpper) : 0;
+            break;
+          case 'putKI':
+            totalPayoffPerUnit = (newValue < barrierLower) ? Math.max(0, strikeLower - newValue) : 0;
+            break;
+          case 'strangle':
+            totalPayoffPerUnit = Math.max(0, strikeLower - newValue) + Math.max(0, newValue - strikeUpper);
+            break;
+          case 'straddle':
+            totalPayoffPerUnit = Math.max(0, strikeMid - newValue) + Math.max(0, newValue - strikeMid);
+            break;
+          case 'seagull':
+            totalPayoffPerUnit = Math.max(0, strikeMid - newValue) - Math.max(0, newValue - strikeUpper) - Math.max(0, strikeLower - newValue);
+            break;
+          case 'callPutKI_KO':
+            const callKOPayoff = (newValue < barrierUpper) ? Math.max(0, newValue - strikeUpper) : 0;
+            const putKIPayoff = (newValue < barrierLower) ? Math.max(0, strikeLower - newValue) : 0;
+            totalPayoffPerUnit = callKOPayoff + putKIPayoff;
+            break;
+          default:
+            totalPayoffPerUnit = 0;
+        }
+      }
+      
+      // Mettre à jour le nouveau payoff calculé
+      updatedResults[index].totalPayoff = totalPayoffPerUnit;
+      
+      // Recalculer les montants basés sur le nouveau payoff et taux réel
+      const unhedgedRevenue = monthlyVolume * newValue;
+      const payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
+      const premiumPaid = updatedResults[index].premiumPaid; // Premium reste inchangé
+      
+      updatedResults[index].unhedgedRevenue = unhedgedRevenue;
+      updatedResults[index].payoffFromHedge = payoffFromHedge;
+      updatedResults[index].hedgedRevenue = unhedgedRevenue + payoffFromHedge - premiumPaid;
+      updatedResults[index].pnlVsUnhedged = payoffFromHedge - premiumPaid;
+      updatedResults[index].effectiveRate = monthlyVolume === 0 ? newValue : updatedResults[index].hedgedRevenue / monthlyVolume;
+    }
+    
+    // Mettre à jour les résultats
+    setResults(updatedResults);
+    
+    // Recalculer les totaux pour les tableaux récapitulatifs
+    let totalHedgedRevenue = 0;
+    let totalUnhedgedRevenue = 0;
+    let totalPnlVsUnhedged = 0;
+    let totalPremiumPaid = 0;
+    let totalPayoffFromHedge = 0;
+    let totalVolume = 0;
+    
+    for (const result of updatedResults) {
+      totalHedgedRevenue += result.hedgedRevenue;
+      totalUnhedgedRevenue += result.unhedgedRevenue;
+      totalPnlVsUnhedged += result.pnlVsUnhedged;
+      totalPremiumPaid += result.premiumPaid;
+      totalPayoffFromHedge += result.payoffFromHedge;
+      totalVolume += result.monthlyVolume;
+    }
+    
+    // Nous n'avons pas besoin de mettre à jour totalSummaryStats car il est calculé automatiquement via useMemo
+    // Le composant se mettra à jour automatiquement lorsque 'results' change
+  };
 
   return (
     <div className="container mx-auto p-4">
@@ -1530,6 +1954,11 @@ const Index = () => {
                             onStrategyChange={handleCustomStrategyChange}
                             baseCurrency={baseCurrency}
                             quoteCurrency={quoteCurrency}
+                            maturity={params.monthsToHedge / 12} // Convert months to years
+                            domesticRate={params.domesticRate}
+                            foreignRate={params.foreignRate}
+                            notional={params.baseNotional}
+                            notionalQuote={params.quoteNotional}
                         />
                     )}
                      {selectedStrategy !== 'custom' && selectedStrategy !== 'forward' && (
@@ -1582,6 +2011,40 @@ const Index = () => {
                           Use Simulation (Monte Carlo) {activeTab === 'historical' ? '(unavailable with historical data)' : ''}
                       </label>
         </div>
+
+                      <div className="flex items-center space-x-2 mb-4 ml-4">
+                        <Checkbox
+                          id="useImpliedVolatility"
+                          checked={useImpliedVolatility}
+                          onCheckedChange={(checked) => {
+                            setUseImpliedVolatility(checked as boolean);
+                          }}
+                        />
+                        <label
+                          htmlFor="useImpliedVolatility"
+                          className={`text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 
+                          ${useImpliedVolatility ? 'text-green-600 font-bold' : ''}`}
+                        >
+                          Use Implied Volatility (modifiable in results table)
+                        </label>
+                      </div>
+
+                      <div className="flex items-center space-x-2 mb-4 ml-4">
+                        <Checkbox
+                          id="usePremiumOverride"
+                          checked={usePremiumOverride}
+                          onCheckedChange={(checked) => {
+                            setUsePremiumOverride(checked as boolean);
+                          }}
+                        />
+                        <label
+                          htmlFor="usePremiumOverride"
+                          className={`text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 
+                          ${usePremiumOverride ? 'text-orange-600 font-bold' : ''}`}
+                        >
+                          Use Manual Premium/Unit (override calculated values)
+                        </label>
+                      </div>
                   </div>
                   
                   {realRateParams.useSimulation && activeTab !== 'historical' && (
@@ -1604,19 +2067,58 @@ const Index = () => {
                                      step="0.1"
                                  />
           </div>
-                             <div>
-                                 <Label htmlFor="numSimulations">Number of Simulations</Label>
-                                 <Input
-                                     type="number"
-                                     name="numSimulations"
-                                     id="numSimulations"
-                                     value={realRateParams.numSimulations}
-                                     onChange={handleRealRateParamChange}
-                                     step="100"
-                                     min="100"
-                                 />
-                             </div>
-                         </div>
+                              <div>
+                                  <Label htmlFor="numSimulations">Number of Simulations</Label>
+                                  <Input
+                                      type="number"
+                                      name="numSimulations"
+                                      id="numSimulations"
+                                      value={realRateParams.numSimulations}
+                                      onChange={handleRealRateParamChange}
+                                      step="100"
+                                      min="100"
+                                  />
+                              </div>
+                              <div className="col-span-2">
+                                  <Label htmlFor="additionalDrift">
+                                      Additional Drift/Trend (±%/year)
+                                      <span className="text-xs text-muted-foreground ml-2">
+                                          Positive: upward trend, Negative: downward trend
+                                      </span>
+                                  </Label>
+                                  <Input
+                                      type="number"
+                                      name="additionalDrift"
+                                      id="additionalDrift"
+                                      value={realRateParams.additionalDrift}
+                                      onChange={handleRealRateParamChange}
+                                      step="1"
+                                      className="mt-1"
+                                  />
+                              </div>
+                              
+                              <div className="col-span-2 mt-2">
+                                  <div className="flex items-center space-x-2">
+                                      <Checkbox 
+                                          id="ignoreDriftFromRates" 
+                                          name="ignoreDriftFromRates"
+                                          checked={realRateParams.ignoreDriftFromRates}
+                                          onCheckedChange={(checked) => {
+                                              setRealRateParams(prev => ({
+                                                  ...prev,
+                                                  ignoreDriftFromRates: checked === true
+                                              }));
+                                          }}
+                                      />
+                                      <Label htmlFor="ignoreDriftFromRates" className="font-medium cursor-pointer">
+                                          Simulation purement aléatoire
+                                          <span className="text-xs text-muted-foreground ml-2 block">
+                                              Ignorer le drift lié aux taux d'intérêt pour obtenir un mouvement plus aléatoire
+                                          </span>
+                                      </Label>
+                                  </div>
+                              </div>
+                          </div>
                      </div>
                  )}
 
@@ -1681,7 +2183,14 @@ const Index = () => {
                         <TableHead className={realRateParams.useSimulation ? "bg-blue-50 font-bold" : ""}>
                           {realRateParams.useSimulation ? "Simulated Rate" : "Real Rate"}
                         </TableHead>
-                        <TableHead className="text-right">Premium/Unit</TableHead>
+                        {useImpliedVolatility && (
+                          <TableHead className="bg-green-50 font-bold">
+                            Implied Vol (%)
+                          </TableHead>
+                        )}
+                        <TableHead className={usePremiumOverride ? "bg-orange-50 font-bold text-right" : "text-right"}>
+                          Premium/Unit
+                        </TableHead>
                         <TableHead className="text-right">Payoff/Unit</TableHead>
                         <TableHead className="text-right">Monthly Vol</TableHead>
                         <TableHead className="text-right">Premium Paid</TableHead>
@@ -1697,11 +2206,52 @@ const Index = () => {
                         <TableRow key={index}>
                           <TableCell>{row.date}</TableCell>
                           <TableCell>{row.timeToMaturity.toFixed(3)}</TableCell>
-                          <TableCell>{row.forwardRate.toFixed(4)}</TableCell>
-                          <TableCell className={realRateParams.useSimulation ? "bg-blue-50 font-medium" : ""}>
-                            {row.realRate.toFixed(6)}
+                          <TableCell>
+                            <Input
+                              type="number"
+                              value={row.forwardRate}
+                              onChange={(e) => handleRateChange(index, 'forwardRate', e.target.value)}
+                              step="0.0001"
+                              min="0.0001"
+                              className="w-24 text-right p-1 h-8"
+                            />
                           </TableCell>
-                          <TableCell className="text-right">{row.strategyPrice.toFixed(5)}</TableCell>
+                          <TableCell className={realRateParams.useSimulation ? "bg-blue-50 font-medium" : ""}>
+                            <Input
+                              type="number"
+                              value={row.realRate}
+                              onChange={(e) => handleRateChange(index, 'realRate', e.target.value)}
+                              step="0.0001"
+                              min="0.0001"
+                              className={`w-24 text-right p-1 h-8 ${realRateParams.useSimulation ? "bg-blue-50" : ""}`}
+                            />
+                          </TableCell>
+                          {useImpliedVolatility && (
+                            <TableCell className="bg-green-50 font-medium">
+                              <Input
+                                type="number"
+                                value={row.impliedVolatility !== undefined ? row.impliedVolatility : (realRateParams.volatility || 15)}
+                                onChange={(e) => handleRateChange(index, 'impliedVolatility', e.target.value)}
+                                step="0.1"
+                                min="0"
+                                className="w-24 text-right p-1 h-8 bg-green-50"
+                              />
+                            </TableCell>
+                          )}
+                          <TableCell className={`text-right ${usePremiumOverride ? "bg-orange-50" : ""}`}>
+                            {usePremiumOverride ? (
+                              <Input
+                                type="number"
+                                value={row.strategyPrice}
+                                onChange={(e) => handleRateChange(index, 'strategyPrice', e.target.value)}
+                                step="0.00001"
+                                min="0"
+                                className="w-24 text-right p-1 h-8 bg-orange-50"
+                              />
+                            ) : (
+                              row.strategyPrice.toFixed(5)
+                            )}
+                          </TableCell>
                           <TableCell className="text-right">{row.totalPayoff.toFixed(5)}</TableCell>
                           <TableCell className="text-right">{row.monthlyVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}</TableCell>
                            <TableCell className="text-right">{row.premiumPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>

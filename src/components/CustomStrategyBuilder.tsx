@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import CustomStrategyOption, { OptionComponent } from "./CustomStrategyOption";
-import { Plus, Info } from "lucide-react";
+import { Plus } from "lucide-react";
 import { GlassContainer } from "@/components/ui/layout";
 import { BARRIER_PRICING_MODELS, setPricingModel } from "@/utils/barrierOptionCalculations";
 
@@ -9,6 +9,10 @@ interface CustomStrategyBuilderProps {
   onStrategyChange: (options: OptionComponent[], globalParams: any) => void;
   baseCurrency?: string;
   quoteCurrency?: string;
+  // Receive forex parameters from parent
+  maturity?: number;
+  domesticRate?: number;
+  foreignRate?: number;
   notional?: number;
   notionalQuote?: number;
 }
@@ -18,6 +22,9 @@ const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({
   onStrategyChange, 
   baseCurrency = "Base", 
   quoteCurrency = "Quote",
+  maturity = 1,
+  domesticRate = 2,
+  foreignRate = 3,
   notional = 1000000,
   notionalQuote = 1000000 * spot
 }) => {
@@ -30,16 +37,10 @@ const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({
       quantity: 100,
     },
   ]);
-  const [globalParams, setGlobalParams] = useState({
-    maturity: 1,
-    r1: 0.02,
-    r2: 0.03,
-    notional: notional,
-    notionalQuote: notionalQuote,
-    pricingModel: BARRIER_PRICING_MODELS.MONTE_CARLO
-  });
-  const [showModelInfo, setShowModelInfo] = useState(false);
-
+  
+  // Only keep barrier option pricing model in globalParams
+  const [pricingModel, setPricingModelState] = useState(BARRIER_PRICING_MODELS.MONTE_CARLO);
+  
   const handleAddOption = () => {
     const newOption: OptionComponent = {
       type: "put",
@@ -50,175 +51,79 @@ const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({
     };
     const updatedOptions = [...options, newOption];
     setOptions(updatedOptions);
-    onStrategyChange(updatedOptions, globalParams);
+    onStrategyChange(updatedOptions, getGlobalParams());
   };
 
   const handleUpdateOption = (index: number, data: Partial<OptionComponent>) => {
     const updatedOptions = [...options];
     updatedOptions[index] = { ...updatedOptions[index], ...data };
     setOptions(updatedOptions);
-    onStrategyChange(updatedOptions, globalParams);
+    onStrategyChange(updatedOptions, getGlobalParams());
   };
 
   const handleDeleteOption = (index: number) => {
     const updatedOptions = [...options];
     updatedOptions.splice(index, 1);
     setOptions(updatedOptions);
-    onStrategyChange(updatedOptions, globalParams);
-  };
-
-  const handleGlobalParamChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    const parsedValue = name === 'notional' ? parseInt(value) : parseFloat(value);
-    const updatedParams = {
-      ...globalParams,
-      [name]: parsedValue
-    };
-    setGlobalParams(updatedParams);
-    onStrategyChange(options, updatedParams);
+    onStrategyChange(updatedOptions, getGlobalParams());
   };
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const model = e.target.value;
     setPricingModel(model); // Set the model globally
-    const updatedParams = {
-      ...globalParams,
+    setPricingModelState(model);
+    onStrategyChange(options, getGlobalParams(model));
+  };
+
+  // Helper function to get current global params
+  const getGlobalParams = (model = pricingModel) => {
+    return {
+      maturity,
+      r1: domesticRate / 100, // Convert from percentage to decimal
+      r2: foreignRate / 100,  // Convert from percentage to decimal
+      notional,
+      notionalQuote,
       pricingModel: model
     };
-    setGlobalParams(updatedParams);
-    onStrategyChange(options, updatedParams);
-  };
-
-  const handleBaseNotionalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newBaseNotional = parseFloat(e.target.value);
-    const newQuoteNotional = newBaseNotional * spot;
-    setGlobalParams(prev => {
-      const updated = {
-        ...prev,
-        notional: newBaseNotional,
-        notionalQuote: newQuoteNotional
-      };
-      onStrategyChange(options, updated);
-      return updated;
-    });
-  };
-
-  const handleQuoteNotionalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newQuoteNotional = parseFloat(e.target.value);
-    const newBaseNotional = newQuoteNotional / spot;
-    setGlobalParams(prev => {
-      const updated = {
-        ...prev,
-        notional: newBaseNotional,
-        notionalQuote: newQuoteNotional
-      };
-      onStrategyChange(options, updated);
-      return updated;
-    });
   };
 
   useEffect(() => {
-    // Set the pricing model globally when component mounts
-    setPricingModel(globalParams.pricingModel);
-    onStrategyChange(options, globalParams);
-  }, []);
+    // Set the pricing model globally when component mounts or when parameters change
+    setPricingModel(pricingModel);
+    onStrategyChange(options, getGlobalParams());
+  }, [maturity, domesticRate, foreignRate, notional, notionalQuote]);
 
   return (
     <>
       <GlassContainer className="mb-8">
-        <h3 className="font-bold text-xl mb-4">Global Parameters</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+        <h3 className="font-bold text-xl mb-4">Barrier Option Pricing</h3>
+        <div className="grid grid-cols-1 gap-4">
           <div>
             <label className="block text-sm font-medium mb-1">
-              Maturity (years)
-              <input
-                type="number"
-                name="maturity"
-                value={globalParams.maturity}
-                onChange={handleGlobalParamChange}
-                step="0.25"
+              Barrier Option Pricing Model
+              <select
+                value={pricingModel}
+                onChange={handleModelChange}
                 className="input-field mt-1 w-full"
-              />
+              >
+                <option value={BARRIER_PRICING_MODELS.MONTE_CARLO}>Monte Carlo Simulation</option>
+                <option value={BARRIER_PRICING_MODELS.CLOSED_FORM}>Closed-Form Analytical</option>
+              </select>
+              <span className="text-xs text-muted-foreground mt-1 block">
+                Closed-Form is faster but only supports single barriers
+              </span>
             </label>
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Rate Currency 1 (%)
-              <input
-                type="number"
-                name="r1"
-                value={globalParams.r1 * 100}
-                onChange={(e) => {
-                  const updatedParams = {
-                    ...globalParams,
-                    r1: parseFloat(e.target.value) / 100
-                  };
-                  setGlobalParams(updatedParams);
-                  onStrategyChange(options, updatedParams);
-                }}
-                step="0.1"
-                className="input-field mt-1 w-full"
-              />
-            </label>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Rate Currency 2 (%)
-              <input
-                type="number"
-                name="r2"
-                value={globalParams.r2 * 100}
-                onChange={(e) => {
-                  const updatedParams = {
-                    ...globalParams,
-                    r2: parseFloat(e.target.value) / 100
-                  };
-                  setGlobalParams(updatedParams);
-                  onStrategyChange(options, updatedParams);
-                }}
-                step="0.1"
-                className="input-field mt-1 w-full"
-              />
-            </label>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Notional Amount
-              <input
-                type="number"
-                name="notional"
-                value={globalParams.notional}
-                onChange={handleGlobalParamChange}
-                step="100000"
-                className="input-field mt-1 w-full"
-              />
-            </label>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              {baseCurrency} Notional
-              <input
-                type="number"
-                value={globalParams.notional.toFixed(0)}
-                onChange={handleBaseNotionalChange}
-                step="100000"
-                className="input-field mt-1"
-              />
-            </label>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              {quoteCurrency} Notional
-              <input
-                type="number"
-                value={globalParams.notionalQuote.toFixed(0)}
-                onChange={handleQuoteNotionalChange}
-                step="100000"
-                className="input-field mt-1"
-              />
-            </label>
+          
+          <div className="bg-muted/20 p-3 rounded-lg text-sm mt-2">
+            <p>Using parameters defined in the main section:</p>
+            <ul className="mt-2 text-xs text-muted-foreground space-y-1">
+              <li><span className="font-medium">Maturity:</span> {maturity} years ({Math.round(maturity * 12)} months)</li>
+              <li><span className="font-medium">Domestic Rate:</span> {domesticRate}%</li>
+              <li><span className="font-medium">Foreign Rate:</span> {foreignRate}%</li>
+              <li><span className="font-medium">{baseCurrency} Notional:</span> {notional.toLocaleString()}</li>
+              <li><span className="font-medium">{quoteCurrency} Notional:</span> {notionalQuote.toLocaleString()}</li>
+            </ul>
           </div>
         </div>
       </GlassContainer>
