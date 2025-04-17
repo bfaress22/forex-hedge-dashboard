@@ -82,8 +82,8 @@ export const calculateBarrierOptionPrice = (
   }
   
   // Use Monte Carlo simulation as a fallback or if specifically selected
-  return calculateMonteCarloPrice(
-    isCall, isPut, isKO, isKI, isReverse, isDouble,
+    return calculateMonteCarloPrice(
+      isCall, isPut, isKO, isKI, isReverse, isDouble,
     spot, strike, upperBarrier, lowerBarrier, t,
     domesticRate, foreignRate, volatility, quantity
   );
@@ -414,27 +414,39 @@ const boxMullerTransform = () => {
   return z;
 };
 
-// Helper function to check if a single barrier is active
+// Function to check if a single barrier is active based on option type
 const isBarrierSingleActive = (spot: number, barrier: number, isCall: boolean, isReverse: boolean) => {
-  if (isCall) {
-    return isReverse 
-      ? spot < barrier ? 1.0 : 0.0  // Reverse: active if spot < barrier
-      : spot > barrier ? 1.0 : 0.0;  // Normal: active if spot > barrier
-  } else {
-    return isReverse 
-      ? spot > barrier ? 1.0 : 0.0  // Reverse: active if spot > barrier
-      : spot < barrier ? 1.0 : 0.0;  // Normal: active if spot < barrier
+  // For standard barriers (non-reverse):
+  // - Call KO/KI: Barrier is UP (above strike), active when spot >= barrier
+  // - Put KO/KI: Barrier is DOWN (below strike), active when spot <= barrier
+  //
+  // For reverse barriers:
+  // - Call RKO/RKI: Barrier is DOWN (below strike), active when spot <= barrier
+  // - Put RKO/RKI: Barrier is UP (above strike), active when spot >= barrier
+  
+  if (isCall && !isReverse) {
+    return spot >= barrier ? 1.0 : 0.0; // Call with up barrier
+  } else if (isCall && isReverse) {
+    return spot <= barrier ? 1.0 : 0.0; // Call with down barrier (reverse)
+  } else if (!isCall && !isReverse) {
+    return spot <= barrier ? 1.0 : 0.0; // Put with down barrier
+  } else { // Put & reverse
+    return spot >= barrier ? 1.0 : 0.0; // Put with up barrier (reverse)
   }
 };
 
-// Helper function to check if a double barrier is active
+// Function to check if a double barrier is active
 const isBarrierActive = (spot: number, upperBarrier: number, lowerBarrier: number, isReverse: boolean) => {
-  if (isReverse) {
-    // Reverse: active if outside the barriers
-    return (spot < lowerBarrier || spot > upperBarrier) ? 1.0 : 0.0;
-  } else {
-    // Normal: active if between the barriers
+  // For standard double barriers:
+  // - Active when lowerBarrier <= spot <= upperBarrier
+  //
+  // For reverse double barriers:
+  // - Active when spot <= lowerBarrier OR spot >= upperBarrier
+  
+  if (!isReverse) {
     return (spot >= lowerBarrier && spot <= upperBarrier) ? 1.0 : 0.0;
+  } else {
+    return (spot <= lowerBarrier || spot >= upperBarrier) ? 1.0 : 0.0;
   }
 };
 
@@ -573,7 +585,7 @@ export const calculateCustomStrategyPayoff = (
   options.forEach(option => {
     const { type, actualStrike, actualUpperBarrier, actualLowerBarrier, quantity } = option;
     const quantityFactor = quantity / 100;
-    const isLong = quantityFactor > 0; // Positive quantity = long position (buying)
+    const isLong = quantityFactor > 0; // Positive quantity = long position (buying), negative = short (selling)
     let optionPayoff = 0;
     const isCall = type.includes("call");
     
@@ -584,8 +596,8 @@ export const calculateCustomStrategyPayoff = (
       // - Si spot <= strike: le payoff est 0
       if (spotPrice > actualStrike) {
         optionPayoff = spotPrice - actualStrike;
-        // Pour un long call (achat, quantityFactor > 0): un payoff positif RÉDUIT le taux effectif
-        // Pour un short call (vente, quantityFactor < 0): un payoff positif AUGMENTE le taux effectif
+        // Pour un achat (quantityFactor > 0): payoff reste positif
+        // Pour une vente (quantityFactor < 0): payoff devient négatif
         totalPayoff += optionPayoff * quantityFactor;
       }
     } 
@@ -595,14 +607,14 @@ export const calculateCustomStrategyPayoff = (
       // - Si spot >= strike: le payoff est 0
       if (spotPrice < actualStrike) {
         optionPayoff = actualStrike - spotPrice;
-        // Pour un long put (achat, quantityFactor > 0): un payoff positif RÉDUIT le taux effectif
-        // Pour un short put (vente, quantityFactor < 0): un payoff positif AUGMENTE le taux effectif
+        // Pour un achat (quantityFactor > 0): payoff reste positif
+        // Pour une vente (quantityFactor < 0): payoff devient négatif
         totalPayoff += optionPayoff * quantityFactor;
       }
     }
     // Traitement des options à barrière
     else if (type.includes("KO") && !type.includes("DKO")) {
-      const isReverse = type.includes("Reverse");
+      const isReverse = type.includes("Reverse") || type.includes("RKO");
       const barrier = actualUpperBarrier;
       
       // Check if KO was triggered (barrier crossed)
@@ -628,20 +640,20 @@ export const calculateCustomStrategyPayoff = (
           // Pour un call
           if (spotPrice > actualStrike) {
             optionPayoff = spotPrice - actualStrike;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         } else {
           // Pour un put
           if (spotPrice < actualStrike) {
             optionPayoff = actualStrike - spotPrice;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         }
       }
     } 
     // Knock-In simple
     else if (type.includes("KI") && !type.includes("DKI")) {
-      const isReverse = type.includes("Reverse");
+      const isReverse = type.includes("Reverse") || type.includes("RKI");
       const barrier = actualUpperBarrier;
       
       // Check if KI was triggered (barrier crossed)
@@ -667,61 +679,77 @@ export const calculateCustomStrategyPayoff = (
           // Pour un call
           if (spotPrice > actualStrike) {
             optionPayoff = spotPrice - actualStrike;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         } else {
           // Pour un put
           if (spotPrice < actualStrike) {
             optionPayoff = actualStrike - spotPrice;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         }
       }
     } 
     // Double KO
     else if (type.includes("DKO")) {
-      const upperBarrier = actualUpperBarrier;
-      const lowerBarrier = actualLowerBarrier;
+      const isReverse = type.includes("Reverse");
+      const upperB = actualUpperBarrier;
+      const lowerB = actualLowerBarrier;
       
-      // KO if spot is outside the barriers
-      const isKnockOut = spotPrice >= upperBarrier || spotPrice <= lowerBarrier;
+      // Check if DKO was triggered
+      let isKnockOut = false;
       
+      if (!isReverse) {
+        // Standard DKO: KO if spot is outside the barriers
+        isKnockOut = spotPrice <= lowerB || spotPrice >= upperB;
+      } else {
+        // Reverse DKO: KO if spot is inside the barriers
+        isKnockOut = spotPrice > lowerB && spotPrice < upperB;
+      }
+      
+      // If not KO, calculate payoff normally
       if (!isKnockOut) {
         if (isCall) {
-          // Pour un call
           if (spotPrice > actualStrike) {
             optionPayoff = spotPrice - actualStrike;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         } else {
-          // Pour un put
           if (spotPrice < actualStrike) {
             optionPayoff = actualStrike - spotPrice;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         }
       }
-    } 
+    }
     // Double KI
     else if (type.includes("DKI")) {
-      const upperBarrier = actualUpperBarrier;
-      const lowerBarrier = actualLowerBarrier;
+      const isReverse = type.includes("Reverse");
+      const upperB = actualUpperBarrier;
+      const lowerB = actualLowerBarrier;
       
-      // KI if spot is outside the barriers
-      const isKnockIn = spotPrice >= upperBarrier || spotPrice <= lowerBarrier;
+      // Check if DKI was triggered
+      let isKnockIn = false;
       
+      if (!isReverse) {
+        // Standard DKI: KI if spot is inside the barriers
+        isKnockIn = spotPrice >= lowerB && spotPrice <= upperB;
+      } else {
+        // Reverse DKI: KI if spot is outside the barriers
+        isKnockIn = spotPrice < lowerB || spotPrice > upperB;
+      }
+      
+      // If KI activated, calculate payoff normally
       if (isKnockIn) {
         if (isCall) {
-          // Pour un call
           if (spotPrice > actualStrike) {
             optionPayoff = spotPrice - actualStrike;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         } else {
-          // Pour un put
           if (spotPrice < actualStrike) {
             optionPayoff = actualStrike - spotPrice;
-            totalPayoff += optionPayoff * quantityFactor;
+            totalPayoff += optionPayoff * quantityFactor; // Applique correctement le signe de la quantité
           }
         }
       }
@@ -740,7 +768,8 @@ export const calculateBarrierPayoff = (
 ) => {
   const isKO = component.type.includes('KO');
   const isKI = component.type.includes('KI');
-  const isReverse = component.type.includes('reverse');
+  const isReverse = component.type.includes('RKO') || component.type.includes('RKI');
+  const isCall = component.type.includes('call');
   
   // Pour les options vanilla standard (non-barrière)
   if (!isKO && !isKI) {
@@ -768,28 +797,33 @@ export const calculateBarrierPayoff = (
     ? initialSpot * (component.lowerBarrier / 100)
     : component.lowerBarrier;
   
-  const isDouble = upperBarrier !== undefined && lowerBarrier !== undefined;
+  const isDouble = component.type.includes('DKO') || component.type.includes('DKI');
   
   // Check if barrier is hit (for simulation purposes)
   let barrierActive = 0.0;
   
-  if (isDouble) {
+  if (isDouble && upperBarrier !== undefined && lowerBarrier !== undefined) {
     barrierActive = isBarrierActive(currentSpot, upperBarrier, lowerBarrier, isReverse);
   } else if (upperBarrier !== undefined) {
-    // Single barrier case
-    const isCall = component.type.includes('call');
+    // For Put Knock-In, the barrier is below the strike
     barrierActive = isBarrierSingleActive(currentSpot, upperBarrier, isCall, isReverse);
   }
   
-  // Calculate payoff based on barrier type
+  // Le payoff final est calculé en fonction de l'activation ou non de la barrière
+  let finalPayoff = 0.0;
+  
   if (isKO) {
     // For KO options, payoff is 0 if barrier is hit
-    return barrierActive > 0.5 ? 0.0 : basePayoff;
+    finalPayoff = barrierActive > 0.5 ? 0.0 : basePayoff;
   } else if (isKI) {
     // For KI options, payoff is positive only if barrier is hit
-    return barrierActive > 0.5 ? basePayoff : 0.0;
+    finalPayoff = barrierActive > 0.5 ? basePayoff : 0.0;
+  } else {
+    // Fallback (should not reach here)
+    finalPayoff = basePayoff;
   }
   
-  // Fallback (should not reach here)
-  return basePayoff;
+  // Retourner le payoff sans appliquer la quantité ici
+  // La quantité sera appliquée dans la fonction appelante
+  return finalPayoff;
 };

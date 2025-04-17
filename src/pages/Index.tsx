@@ -610,6 +610,8 @@ const Index = () => {
     // Vérifier si c'est une option à barrière
     const isKO = instrument.type.includes('KO');
     const isKI = instrument.type.includes('KI');
+    const isReverse = instrument.type.includes('RKO') || instrument.type.includes('RKI');
+    const isCall = instrument.type.includes('call');
     
     if (!isKO && !isKI) {
         // Si ce n'est pas une option à barrière, retourner simplement le payoff de base
@@ -624,8 +626,20 @@ const Index = () => {
             ? initialSpotRateForStrike * (instrument.upperBarrier / 100)
             : instrument.upperBarrier;
             
-        // Barrière supérieure touchée si le prix > barrière supérieure
-        barrierHit = realRate >= upperBarrierValue;
+        // Vérifier si la barrière est touchée en fonction du type d'option
+        if (isCall && !isReverse) {
+            // Call standard KO/KI (up): barrière touchée si spot >= barrier
+            barrierHit = realRate >= upperBarrierValue;
+        } else if (isCall && isReverse) {
+            // Call reverse KO/KI (down): barrière touchée si spot <= barrier
+            barrierHit = realRate <= upperBarrierValue;
+        } else if (!isCall && !isReverse) {
+            // Put standard KO/KI (down): barrière touchée si spot <= barrier
+            barrierHit = realRate <= upperBarrierValue;
+        } else if (!isCall && isReverse) {
+            // Put reverse KO/KI (up): barrière touchée si spot >= barrier
+            barrierHit = realRate >= upperBarrierValue;
+        }
     } 
     else if (instrument.lowerBarrier !== undefined) {
         const lowerBarrierValue = instrument.lowerBarrierType === 'percent'
@@ -864,6 +878,7 @@ const Index = () => {
                 const strikeRate = comp.strikeType === 'percent' ? initialS * (comp.strike / 100) : comp.strike;
                 const componentVol = (comp.volatility || vol * 100) / 100; // Use component's vol or default
                 const quantityFactor = comp.quantity / 100;
+                const isLongPosition = quantityFactor > 0; // Achat si positif, vente si négatif
                 let premium = 0;
                 let payoff = 0;
                 let priceLabel = `${comp.type} @ ${strikeRate.toFixed(4)}`;
@@ -871,7 +886,7 @@ const Index = () => {
                 // Premium Calculation - Use appropriate model based on option type
                 if (comp.type === 'call' || comp.type === 'put') {
                     // Use Garman-Kohlhagen (Black-Scholes for FX) for vanilla options
-                    premium = calculateOptionPrice_GarmanKohlhagen(comp.type, S, strikeRate, r_d, r_f, t, componentVol) * quantityFactor;
+                    premium = calculateOptionPrice_GarmanKohlhagen(comp.type, S, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor);
                 } else if (comp.type.includes('KO') || comp.type.includes('KI')) {
                     // Use barrier option pricing model for barrier options
                     const upperBarrier = comp.upperBarrierType === 'percent' 
@@ -893,7 +908,7 @@ const Index = () => {
                         r_d,
                         r_f,
                         componentVol,
-                        comp.quantity
+                        Math.abs(comp.quantity)
                     );
                     
                     console.log(`Barrier option premium calculated: ${premium.toFixed(6)} for ${comp.type} strike=${strikeRate}, barriers=${upperBarrier},${lowerBarrier}`);
@@ -901,14 +916,25 @@ const Index = () => {
 
                 // Payoff Calculation (using helper)
                 const basePayoff = comp.type.includes('call') ? Math.max(0, realRate - strikeRate) : Math.max(0, strikeRate - realRate);
-                payoff = calculateBarrierPayoff(comp, realRate, basePayoff, initialS) * quantityFactor;
+                payoff = calculateBarrierPayoff(comp, realRate, basePayoff, initialS) * Math.abs(quantityFactor);
 
                  if (!isNaN(premium)) {
-                     totalPremiumPerUnit += premium;
-                     optionPricesDetails.push({ type: comp.type, price: premium / quantityFactor, quantity: comp.quantity, strike: strikeRate, label: priceLabel });
+                     // Pour une position longue (achat), premium est un coût
+                     // Pour une position courte (vente), premium est un gain
+                     totalPremiumPerUnit += isLongPosition ? premium : -premium;
+                     optionPricesDetails.push({
+                         type: comp.type,
+                         price: premium / Math.abs(quantityFactor),
+                         quantity: comp.quantity, // Garde le signe pour indiquer achat/vente
+                         strike: strikeRate,
+                         label: priceLabel
+                     });
                  } else { console.warn(`NaN premium calculated for custom component:`, comp); }
+                 
                  if (!isNaN(payoff)) {
-                     totalPayoffPerUnit += payoff;
+                     // Pour une position longue (achat), payoff positif est un gain
+                     // Pour une position courte (vente), payoff positif est une perte
+                     totalPayoffPerUnit += isLongPosition ? payoff : -payoff;
                  } else { console.warn(`NaN payoff calculated for custom component:`, comp); }
              });
              // --- Custom Strategy Calculation --- END
@@ -1098,9 +1124,9 @@ const Index = () => {
             customStrategyComponents.forEach((comp, idx) => {
                 const strikeRate = comp.strikeType === 'percent' ? initialS * (comp.strike / 100) : comp.strike;
                 const componentVol = (comp.volatility || vol * 100) / 100;
-                // Important: Apply the sign of the quantity to identify buy vs sell
+                // Important: Appliquer le signe de la quantité pour identifier achat vs vente
                 const quantityFactor = comp.quantity / 100;
-                const isLongPosition = quantityFactor > 0;
+                const isLongPosition = quantityFactor > 0; // Achat si positif, vente si négatif
                 let componentPremium = 0;
 
                 // Premium (calculated at current 'spot')
@@ -1111,7 +1137,8 @@ const Index = () => {
                     componentPremium = calculateOptionPrice_GarmanKohlhagen(comp.type.includes('call') ? 'call' : 'put', spot, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor); 
                 }
                 
-                // For a long position (buying), premium is negative; for short (selling), premium is positive
+                // Pour une position longue (achat), le premium est un coût (négatif)
+                // Pour une position courte (vente), le premium est un gain (positif)
                 premiumCost += isNaN(componentPremium) ? 0 : (isLongPosition ? -componentPremium : componentPremium);
 
                 // Calculate the base payoff for the option
@@ -1126,6 +1153,8 @@ const Index = () => {
                 const componentPayoff = calculateBarrierPayoff(comp, currentSpot, basePayoff, initialS);
                 
                 // Apply quantity - maintain the sign to correctly reflect buy/sell
+                // Pour un achat (long), le payoff positif est un gain (reste positif)
+                // Pour une vente (short), le payoff positif est une perte (devient négatif)
                 payoffAtSpot += isNaN(componentPayoff) ? 0 : (componentPayoff * quantityFactor);
 
                 // Store details for chart reference lines
@@ -1233,10 +1262,13 @@ const Index = () => {
                      payoffAtSpot = Math.max(0, strikeLower - currentSpot) - Math.max(0, currentSpot - strikeUpper); 
                      break;
                  case 'callKO': 
+                     // Call KO (up-and-out): KO if spot >= barrier
                      payoffAtSpot = (currentSpot < barrierUpper) ? Math.max(0, currentSpot - strikeUpper) * quantityFactor : 0; 
                      break;
                  case 'putKI': 
-                     payoffAtSpot = (currentSpot < barrierLower) ? Math.max(0, strikeLower - currentSpot) * quantityFactor : 0; 
+                     // Put KI (down-and-in): KI if spot <= barrier
+                     // Corrected to match financial principle: Put KI only activates when spot falls below barrier
+                     payoffAtSpot = (currentSpot <= barrierLower) ? Math.max(0, strikeLower - currentSpot) * quantityFactor : 0; 
                      break;
                  case 'strangle': 
                      payoffAtSpot = (Math.max(0, strikeLower - currentSpot) + Math.max(0, currentSpot - strikeUpper)) * quantityFactor; 
@@ -1250,8 +1282,10 @@ const Index = () => {
                                    - Math.max(0, strikeLower - currentSpot)) * quantityFactor;
                      break;
                  case 'callPutKI_KO': 
+                     // Call KO (up-and-out): KO if spot >= upperBarrier
                      const callKOPayoffChart = (currentSpot < barrierUpper) ? Math.max(0, currentSpot - strikeUpper) : 0;
-                     const putKIPayoffChart = (currentSpot < barrierLower) ? Math.max(0, strikeLower - currentSpot) : 0;
+                     // Put KI (down-and-in): KI if spot <= lowerBarrier
+                     const putKIPayoffChart = (currentSpot <= barrierLower) ? Math.max(0, strikeLower - currentSpot) : 0;
                      payoffAtSpot = (callKOPayoffChart + putKIPayoffChart) * quantityFactor;
                      break;
                  default: 
@@ -2546,6 +2580,23 @@ const Index = () => {
             updateScenario={updateScenario}
             applyScenario={applyStressTest}
             activeScenarioKey={activeStressTestKey}
+            results={results}
+            yearlySummaryStats={yearlySummaryStats}
+            totalSummaryStats={totalSummaryStats}
+            payoffData={payoffData}
+            baseCurrency={baseCurrency}
+            quoteCurrency={quoteCurrency}
+            selectedStrategy={selectedStrategy}
+            initialSpotRate={initialSpotRate}
+            includePremium={includePremium}
+            realRateParams={realRateParams}
+            useImpliedVolatility={useImpliedVolatility}
+            usePremiumOverride={usePremiumOverride}
+            handleRateChange={handleRateChange}
+            monteCarloPaths={monteCarloPaths}
+            showNotional={showNotional}
+            baseNotional={params.baseNotional}
+            quoteNotional={params.quoteNotional}
           />
         </TabsContent>
 

@@ -442,8 +442,7 @@ const HedgeCalculator = () => {
           params.r1,
           params.r2,
           vol,
-          option.quantity,
-          globalParams.pricingModel
+          option.quantity
         );
       } else if (option.type.includes("KI") && !option.type.includes("DKI")) {
         const isCall = option.type.includes("call");
@@ -458,8 +457,7 @@ const HedgeCalculator = () => {
           params.r1,
           params.r2,
           vol,
-          option.quantity,
-          globalParams.pricingModel
+          option.quantity
         );
       } else if (option.type.includes("DKO")) {
         const isCall = option.type.includes("call");
@@ -473,8 +471,7 @@ const HedgeCalculator = () => {
           params.r1,
           params.r2,
           vol,
-          option.quantity,
-          globalParams.pricingModel
+          option.quantity
         );
       } else if (option.type.includes("DKI")) {
         const isCall = option.type.includes("call");
@@ -488,8 +485,7 @@ const HedgeCalculator = () => {
           params.r1,
           params.r2,
           vol,
-          option.quantity,
-          globalParams.pricingModel
+          option.quantity
         );
       }
       
