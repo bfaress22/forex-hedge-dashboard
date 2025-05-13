@@ -1,6 +1,6 @@
-
 import React from "react";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/lib/theme-provider";
 
 // Section container for better organization
 export const Section = ({
@@ -8,13 +8,19 @@ export const Section = ({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => {
+  const { isBloomberg } = useTheme();
+  
   return (
-    <section 
-      className={cn("py-8 px-4 md:px-6 transition-all duration-300 animate-fade-in", className)} 
+    <div
+      className={cn(
+        "py-6",
+        isBloomberg && "border-b border-[#444444]",
+        className
+      )}
       {...props}
     >
       {children}
-    </section>
+    </div>
   );
 };
 
@@ -24,9 +30,16 @@ export const GlassContainer = ({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => {
+  const { isBloomberg } = useTheme();
+  
   return (
-    <div 
-      className={cn("glass-effect rounded-xl p-6", className)} 
+    <div
+      className={cn(
+        "rounded-lg p-6",
+        !isBloomberg && "glass-effect",
+        isBloomberg && "bg-black border border-[#444444]",
+        className
+      )}
       {...props}
     >
       {children}
@@ -65,6 +78,7 @@ export const Heading = ({
   className,
   ...props
 }: HeadingProps) => {
+  const { isBloomberg } = useTheme();
   const Tag = `h${level}` as keyof JSX.IntrinsicElements;
   
   return (
@@ -78,6 +92,7 @@ export const Heading = ({
           level === 4 && "text-lg md:text-xl",
           level === 5 && "text-base md:text-lg",
           level === 6 && "text-sm md:text-base",
+          isBloomberg && "text-[#ff9e00]",
           className
         )} 
       >
@@ -122,33 +137,105 @@ export const Grid = ({
 };
 
 // Value display component
-interface ValueDisplayProps extends React.HTMLAttributes<HTMLDivElement> {
-  label: string;
-  value: string | number;
-  suffix?: string;
-  highlight?: boolean;
-}
-
-export const ValueDisplay = ({
-  label,
-  value,
-  suffix,
-  highlight = false,
+export const ValueDisplay = ({ 
+  value, 
+  prefix = "", 
+  suffix = "", 
+  currency = false, 
+  percentage = false, 
+  colored = true, 
+  positive = true,
+  negative = true,
   className,
-  ...props
-}: ValueDisplayProps) => {
+  fixed = 4,
+  label,
+  highlight
+}: { 
+  value: number | string; 
+  prefix?: string; 
+  suffix?: string; 
+  currency?: boolean; 
+  percentage?: boolean;
+  colored?: boolean;
+  positive?: boolean;
+  negative?: boolean;
+  className?: string;
+  fixed?: number;
+  label?: string;
+  highlight?: boolean;
+}) => {
+  const { isBloomberg } = useTheme();
+  
+  // Si value est une chaîne, l'afficher directement
+  if (typeof value === 'string') {
+    return (
+      <div className={className}>
+        {label && <p className="text-xs text-muted-foreground mb-1">{label}</p>}
+        <p className={isBloomberg ? "text-[#ff9e00]" : ""}>
+          {prefix}{value}{suffix}
+        </p>
+      </div>
+    );
+  }
+  
+  // Sinon, traiter comme avant pour les nombres
+  const isPositive = value > 0;
+  const isNegative = value < 0;
+  
+  let formattedValue;
+  
+  if (currency) {
+    formattedValue = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value);
+  } else if (percentage) {
+    formattedValue = `${(value * 100).toFixed(2)}%`;
+  } else if (highlight) {
+    formattedValue = value.toFixed(4);
+  } else {
+    formattedValue = value.toFixed(fixed);
+  }
+  
+  if (!label) {
+    return (
+      <span 
+        className={cn(
+          // Couleurs standard
+          !isBloomberg && colored && isPositive && positive && "text-green-500",
+          !isBloomberg && colored && isNegative && negative && "text-red-500",
+          
+          // Couleurs Bloomberg
+          isBloomberg && colored && isPositive && positive && "bloomberg-up",
+          isBloomberg && colored && isNegative && negative && "bloomberg-down",
+          isBloomberg && (!isPositive && !isNegative) && "bloomberg-neutral",
+          
+          className
+        )}
+      >
+        {prefix}{formattedValue}{suffix}
+      </span>
+    );
+  }
+  
   return (
     <div 
       className={cn(
         "p-3 rounded-lg",
         highlight ? "bg-primary/10" : "bg-card", 
+        !isBloomberg && isPositive && "text-green-500",
+        !isBloomberg && isNegative && "text-red-500",
+        isBloomberg && isPositive && "bloomberg-up",
+        isBloomberg && isNegative && "bloomberg-down",
+        isBloomberg && (!isPositive && !isNegative) && "bloomberg-neutral",
         className
       )} 
-      {...props}
     >
       <p className="text-xs text-muted-foreground mb-1">{label}</p>
       <p className={cn("font-medium", highlight && "text-primary")}>
-        {value}{suffix && <span className="text-sm font-normal ml-1">{suffix}</span>}
+        {formattedValue}{suffix && <span className="text-sm font-normal ml-1">{suffix}</span>}
       </p>
     </div>
   );

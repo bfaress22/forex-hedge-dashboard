@@ -11,6 +11,8 @@ import {
   ReferenceLine,
 } from "recharts";
 import { GlassContainer } from "@/components/ui/layout";
+import { useTheme } from "@/lib/theme-provider";
+import { cn } from "@/lib/utils";
 
 interface PayoffChartProps {
   data: any[];
@@ -25,19 +27,42 @@ interface PayoffChartProps {
 }
 
 // Custom tooltip component for better styling
-const CustomTooltip = ({ active, payload, label, showNotional, notional, baseCurrency, quoteCurrency }: any) => {
+const CustomTooltip = ({ 
+  active, 
+  payload, 
+  label, 
+  showNotional, 
+  notional, 
+  baseCurrency, 
+  quoteCurrency 
+}: any) => {
+  const { isBloomberg } = useTheme();
+  
   if (active && payload && payload.length) {
     return (
-      <div className="bg-background border border-border p-3 rounded-lg shadow-lg">
-        <p className="font-semibold">Spot Rate: {Number(label).toFixed(4)}</p>
+      <div className={cn(
+        "p-3 rounded-lg shadow-lg",
+        !isBloomberg && "bg-background border border-border",
+        isBloomberg && "bg-black border border-[#444444] text-[#ff9e00]"
+      )}>
+        <p className={cn(
+          "font-semibold",
+          isBloomberg && "text-[#cccccc]"
+        )}>
+          Spot Rate: {Number(label).toFixed(4)}
+        </p>
         {payload.map((entry: any, index: number) => (
-          <p key={`item-${index}`} style={{ color: entry.color }}>
+          <p key={`item-${index}`} style={{ color: isBloomberg ? entry.name.includes("Unhedged") ? "#ff9e00" : entry.name.includes("without") ? "#8B5CF6" : "#3B82F6" : entry.color }}>
             {entry.name}: {Number(entry.value).toFixed(4)}
           </p>
         ))}
         {showNotional && (
           <>
-            <hr className="my-2 border-border" />
+            <hr className={cn(
+              "my-2",
+              !isBloomberg && "border-border",
+              isBloomberg && "border-[#444444]"
+            )} />
             <p>
               <span className="font-medium">{baseCurrency} Amount:</span>{" "}
               {notional?.toLocaleString()}
@@ -59,6 +84,8 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
   data, selectedStrategy, spot, includePremium, 
   showNotional, notional, notionalQuote, baseCurrency, quoteCurrency 
 }) => {
+  const { isBloomberg } = useTheme();
+  
   // Reverse the logic to fix the behavior
   const shouldIncludePremium = !includePremium;
   
@@ -70,7 +97,7 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
         key="hedged"
         type="monotone"
         dataKey="Hedged Rate"
-        stroke="#3B82F6"
+        stroke={isBloomberg ? "#3B82F6" : "#3B82F6"}
         strokeWidth={2}
         dot={false}
         activeDot={{ r: 6 }}
@@ -80,7 +107,7 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
         key="unhedged"
         type="monotone"
         dataKey="Unhedged Rate"
-        stroke="#9CA3AF"
+        stroke={isBloomberg ? "#ff9e00" : "#9CA3AF"}
         strokeWidth={2}
         strokeDasharray="4 4"
         dot={false}
@@ -95,7 +122,7 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
           key="hedged-no-premium"
           type="monotone"
           dataKey="Hedged Rate (No Premium)"
-          stroke="#8B5CF6" // Purple
+          stroke={isBloomberg ? "#8B5CF6" : "#8B5CF6"} // Purple
           strokeWidth={2}
           strokeDasharray="3 3"
           dot={false}
@@ -109,7 +136,7 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
           key="hedged-with-premium"
           type="monotone"
           dataKey="Hedged Rate with Premium"
-          stroke="#EC4899" // Pink
+          stroke={isBloomberg ? "#EC4899" : "#EC4899"} // Pink
           strokeWidth={2}
           strokeDasharray="3 3"
           dot={false}
@@ -124,12 +151,12 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
       <ReferenceLine
         key="spot"
         x={spot}
-        stroke="#6B7280"
+        stroke={isBloomberg ? "#6B7280" : "#6B7280"}
         strokeWidth={1}
         label={{
           value: "Current Spot",
           position: "top",
-          fill: "#6B7280",
+          fill: isBloomberg ? "#cccccc" : "#6B7280",
           fontSize: 12,
         }}
       />,
@@ -159,16 +186,16 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
       // Add reference lines for each option component
       optionKeys.forEach(key => {
         if (firstDataPoint[key]) {
-          let color = "#047857"; // Default green for strikes
+          let color = isBloomberg ? "#00ba3f" : "#047857"; // Default green for strikes
           let dashArray = "3 3";
           const position = key.includes('Upper Barrier') ? 'top' : 
                            key.includes('Lower Barrier') ? 'bottom' : 'top';
           
           if (key.includes('Upper Barrier')) {
-            color = "#EF4444"; // Red for upper barriers
+            color = isBloomberg ? "#ff3d3d" : "#EF4444"; // Red for upper barriers
             dashArray = "5 5";
           } else if (key.includes('Lower Barrier')) {
-            color = "#10B981"; // Green for lower barriers
+            color = isBloomberg ? "#00ba3f" : "#10B981"; // Green for lower barriers
             dashArray = "5 5";
           }
           
@@ -196,13 +223,13 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
           <ReferenceLine
             key="ko-barrier"
             x={data[0]["KO Barrier"]}
-            stroke="#EF4444"
+            stroke={isBloomberg ? "#ff3d3d" : "#EF4444"}
             strokeWidth={1}
             strokeDasharray="5 5"
             label={{
               value: "KO Barrier",
               position: "top",
-              fill: "#EF4444",
+              fill: isBloomberg ? "#ff3d3d" : "#EF4444",
               fontSize: 12,
             }}
           />
@@ -215,13 +242,13 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
           <ReferenceLine
             key="ki-barrier"
             x={data[0]["KI Barrier"]}
-            stroke="#10B981"
+            stroke={isBloomberg ? "#00ba3f" : "#10B981"}
             strokeWidth={1}
             strokeDasharray="5 5"
             label={{
               value: "KI Barrier",
               position: "top",
-              fill: "#10B981",
+              fill: isBloomberg ? "#00ba3f" : "#10B981",
               fontSize: 12,
             }}
           />
@@ -234,13 +261,13 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
           <ReferenceLine
             key="upper-barrier"
             x={data[0]["Upper Barrier (KO)"]}
-            stroke="#EF4444"
+            stroke={isBloomberg ? "#ff3d3d" : "#EF4444"}
             strokeWidth={1}
             strokeDasharray="5 5"
             label={{
               value: "Upper KO",
               position: "top",
-              fill: "#EF4444",
+              fill: isBloomberg ? "#ff3d3d" : "#EF4444",
               fontSize: 12,
             }}
           />
@@ -252,13 +279,13 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
           <ReferenceLine
             key="lower-barrier"
             x={data[0]["Lower Barrier (KI)"]}
-            stroke="#10B981"
+            stroke={isBloomberg ? "#00ba3f" : "#10B981"}
             strokeWidth={1}
             strokeDasharray="5 5"
             label={{
               value: "Lower KI",
               position: "bottom",
-              fill: "#10B981",
+              fill: isBloomberg ? "#00ba3f" : "#10B981",
               fontSize: 12,
             }}
           />
@@ -281,12 +308,12 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
       <>
         <ReferenceLine
           y={spot}
-          stroke="#82ca9d"
+          stroke={isBloomberg ? "#00ba3f" : "#82ca9d"}
           strokeDasharray="3 3"
           label={{
             value: `Notional: ${notional.toLocaleString()} ${baseCurrency} / ${notionalQuote.toLocaleString()} ${quoteCurrency}`,
             position: 'insideTopRight',
-            fill: '#82ca9d'
+            fill: isBloomberg ? "#00ba3f" : "#82ca9d"
           }}
         />
       </>
@@ -294,10 +321,26 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
   };
 
   return (
-    <GlassContainer className="p-0 overflow-hidden mt-6">
-      <div className="p-4 border-b border-border">
-        <h3 className="text-lg font-medium">Payoff Profile</h3>
-        <p className="text-sm text-muted-foreground">
+    <GlassContainer className={cn(
+      "p-0 overflow-hidden mt-6",
+      isBloomberg && "border border-[#444444] rounded-none"
+    )}>
+      <div className={cn(
+        "p-4 border-b", 
+        !isBloomberg && "border-border",
+        isBloomberg && "border-[#444444] bg-[#222222]"
+      )}>
+        <h3 className={cn(
+          "text-lg font-medium",
+          isBloomberg && "text-[#ff9e00]"
+        )}>
+          Payoff Profile
+        </h3>
+        <p className={cn(
+          "text-sm",
+          !isBloomberg && "text-muted-foreground",
+          isBloomberg && "text-[#cccccc]"
+        )}>
           Visualize how the {selectedStrategy} strategy performs across different exchange rates
           {shouldIncludePremium ? " (with premium included)" : " (without premium)"}
         </p>
@@ -305,7 +348,11 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
       <div className="p-4" style={{ height: "400px" }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+            <CartesianGrid 
+              strokeDasharray="3 3" 
+              opacity={0.2} 
+              stroke={isBloomberg ? "#444444" : undefined}
+            />
             <XAxis
               dataKey="spot"
               domain={["dataMin", "dataMax"]}
@@ -314,19 +361,28 @@ const PayoffChart: React.FC<PayoffChartProps> = ({
                 value: "Exchange Rate",
                 position: "insideBottom",
                 offset: -5,
+                fill: isBloomberg ? "#cccccc" : undefined
               }}
+              stroke={isBloomberg ? "#cccccc" : undefined}
             />
             <YAxis
               tickFormatter={(value) => value.toFixed(2)}
               domain={["dataMin - 0.05", "dataMax + 0.05"]}
+              stroke={isBloomberg ? "#cccccc" : undefined}
             />
-            <Tooltip content={<CustomTooltip 
+            <Tooltip content={
+              <CustomTooltip 
               showNotional={showNotional}
               notional={notional}
               baseCurrency={baseCurrency}
               quoteCurrency={quoteCurrency}
-            />} />
-            <Legend verticalAlign="top" height={36} />
+              />
+            } />
+            <Legend 
+              verticalAlign="top" 
+              height={36} 
+              wrapperStyle={{ color: isBloomberg ? "#cccccc" : undefined }}
+            />
             {lines}
             {referenceLines}
             {showNotional && renderNotionalReferences()}

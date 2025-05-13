@@ -573,3 +573,75 @@ export const calculatePayoff = (results: any, selectedStrategy: string, params: 
   
   return spots;
 };
+
+// Appliquer les effets d'un scénario de stress test aux résultats
+export const applyStressTestToResults = (
+  initialResults: any[],
+  scenario: {
+    volatility: number;
+    rateShock: number;
+    rateDifferentialShock?: number;
+    forwardPointsShock?: number;
+  },
+  params: {
+    domesticRate: number; 
+    foreignRate: number;
+    monthsToHedge: number;
+  },
+  recalculateOptions: boolean = true
+) => {
+  if (!initialResults || initialResults.length === 0) return [];
+
+  // Convertir les taux en décimal
+  const r_d = params.domesticRate / 100;
+  const r_f = params.foreignRate / 100;
+  
+  // Appliquer le choc au différentiel de taux si spécifié
+  let adjustedDomesticRate = r_d;
+  let adjustedForeignRate = r_f;
+  
+  if (scenario.rateDifferentialShock !== undefined && scenario.rateDifferentialShock !== 0) {
+    // Le choc élargit ou réduit l'écart entre les taux
+    // Si r_d = 2% et r_f = 1%, le différentiel est de 1%
+    // Un shock de +0.5% ferait passer le différentiel à 1.5%
+    const currentDiff = r_d - r_f;
+    const newDiff = currentDiff + scenario.rateDifferentialShock;
+    
+    // On distribue le choc également entre les deux taux
+    adjustedDomesticRate = r_d + (scenario.rateDifferentialShock / 2);
+    adjustedForeignRate = r_f - (scenario.rateDifferentialShock / 2);
+  }
+
+  return initialResults.map((result, index) => {
+    // Copier le résultat original
+    const stressedResult = { ...result };
+    
+    // Appliquer le choc au taux réel
+    stressedResult.realRate = stressedResult.realRate * (1 + scenario.rateShock);
+    
+    // Calculer le nouveau taux à terme avec le différentiel de taux modifié
+    const timeToMaturity = stressedResult.timeToMaturity; // En années
+    const spotRate = stressedResult.realRate / (1 + scenario.rateShock); // Taux spot original
+    
+    // Forward = Spot * e^((r_d - r_f) * T)
+    stressedResult.forwardRate = spotRate * Math.exp((adjustedDomesticRate - adjustedForeignRate) * timeToMaturity);
+    
+    // Appliquer un choc direct aux points forwards si spécifié
+    if (scenario.forwardPointsShock !== undefined && scenario.forwardPointsShock !== 0) {
+      // Les points forwards sont exprimés en % du taux spot sur la période
+      stressedResult.forwardRate += spotRate * scenario.forwardPointsShock;
+    }
+    
+    // Nouvelle volatilité implicite
+    if (recalculateOptions && stressedResult.impliedVolatility !== undefined) {
+      stressedResult.impliedVolatility = Math.max(scenario.volatility * 100, stressedResult.impliedVolatility);
+    } else if (recalculateOptions) {
+      stressedResult.impliedVolatility = scenario.volatility * 100;
+    }
+    
+    // TODO: Recalculer les prix des options et payoffs en fonction des nouveaux paramètres
+    // Cette partie dépend de la structure exacte de vos données et des calculs d'options
+    
+    return stressedResult;
+  });
+};

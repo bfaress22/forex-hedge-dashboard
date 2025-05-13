@@ -12,7 +12,14 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, 
   Tooltip, ReferenceLine, ResponsiveContainer 
 } from 'recharts';
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
+import {
+  Tooltip as TooltipUI,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useTheme } from "@/lib/theme-provider";
 
 // Define the Props interface
 interface Props {
@@ -42,6 +49,14 @@ interface Props {
   quoteNotional?: number;
 }
 
+// Tooltip Help Content
+const tooltipContent = {
+  volatility: "Volatility measures the magnitude of exchange rate price variations. Higher volatility indicates larger price movements in both directions.",
+  rateShock: "Rate shock represents a sudden and significant movement in the exchange rate. A positive shock means appreciation, negative means depreciation.",
+  rateDifferential: "Rate differential shock represents a change in the gap between domestic and foreign interest rates. Affects forward rates and option prices via interest rate parity.",
+  forwardPointsShock: "Forward points shock directly affects forward rates without changing the spot rate."
+};
+
 const StressTesting: React.FC<Props> = ({ // Update component to use props
     scenarios,
     customScenario,
@@ -66,6 +81,7 @@ const StressTesting: React.FC<Props> = ({ // Update component to use props
     baseNotional = 0,
     quoteNotional = 0
 }) => {
+  const { isBloomberg } = useTheme();
 
   // Combine default scenarios and the custom one for mapping
   const allScenarios = {
@@ -75,6 +91,26 @@ const StressTesting: React.FC<Props> = ({ // Update component to use props
 
   // Track which scenario is expanded in the UI
   const [expandedScenario, setExpandedScenario] = useState<string | null>(activeScenarioKey);
+  
+  // Financial validation
+  const validateScenarioParams = (scenario: ForexStressTestScenario) => {
+    // Volatility should typically be between 1% and 100%
+    if (scenario.volatility < 0 || scenario.volatility > 1) {
+      return "Volatility should be between 0 and 1 (0-100%)";
+    }
+    
+    // Rate shocks are typically within -30% to +30% in extreme cases
+    if (Math.abs(scenario.rateShock) > 0.3) {
+      return "Rate shock might be extreme (>30%)";
+    }
+    
+    // Rate differential shocks are typically within -500bps to +500bps
+    if (scenario.rateDifferentialShock && Math.abs(scenario.rateDifferentialShock) > 0.05) {
+      return "Rate differential shock might be extreme (>500bps)";
+    }
+    
+    return null;
+  };
   
   // Toggle expanded state for a scenario
   const toggleExpand = (key: string) => {
@@ -89,10 +125,22 @@ const StressTesting: React.FC<Props> = ({ // Update component to use props
           const isActive = activeScenarioKey === key;
           const isExpanded = expandedScenario === key;
           const isEditable = scenario.isEditable || scenario.isCustom;
+          const validationWarning = validateScenarioParams(scenario);
 
           // Helper function for input change
           const handleInputChange = (field: keyof ForexStressTestScenario, value: string) => {
-            updateScenario(key, field, value);
+            let parsedValue = parseFloat(value);
+            
+            // Convert percentages to decimal
+            if (field === 'volatility') {
+              parsedValue = parsedValue / 100;
+            } else if (field === 'rateShock') {
+              parsedValue = parsedValue / 100;
+            } else if (field === 'rateDifferentialShock') {
+              parsedValue = parsedValue / 10000; // Convert from basis points to decimal
+            }
+            
+            updateScenario(key, field, parsedValue.toString());
           };
 
           return (
@@ -101,65 +149,175 @@ const StressTesting: React.FC<Props> = ({ // Update component to use props
               className={cn(
                 "flex flex-col transition-all", 
                 isActive ? "border-primary shadow-lg" : "",
-                isExpanded ? "bg-muted/10" : ""
+                isExpanded ? "bg-muted/10" : "",
+                isBloomberg && "rounded-none border-[#444444] bg-black"
               )}
             >
               <div 
-                className="flex items-center justify-between px-4 py-3 cursor-pointer"
+                className={cn(
+                  "flex items-center justify-between px-4 py-3 cursor-pointer",
+                  isBloomberg && "bg-[#222222]"
+                )}
                 onClick={() => toggleExpand(key)}
               >
-                <span className="font-medium">{scenario.name}</span>
-                {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                <span className={cn(
+                  "font-medium",
+                  isBloomberg && "text-[#ff9e00]"
+                )}>{scenario.name}</span>
+                {isExpanded ? <ChevronUp size={16} className={isBloomberg ? "text-[#cccccc]" : ""} /> : <ChevronDown size={16} className={isBloomberg ? "text-[#cccccc]" : ""} />}
               </div>
               
               {isExpanded && (
                 <>
-                  <CardContent className="pt-0 px-4 pb-2 space-y-3">
+                  <CardContent className={cn(
+                    "pt-0 px-4 pb-2 space-y-3",
+                    isBloomberg && "text-[#ff9e00]"
+                  )}>
                     {scenario.description && (
-                      <p className="text-xs text-muted-foreground">{scenario.description}</p>
+                      <p className={cn(
+                        "text-xs",
+                        !isBloomberg && "text-muted-foreground",
+                        isBloomberg && "text-[#cccccc]"
+                      )}>{scenario.description}</p>
+                    )}
+                    
+                    <p className={cn(
+                      "text-xs",
+                      !isBloomberg && "text-blue-600",
+                      isBloomberg && "text-[#0072ff]"
+                    )}>
+                      Note: Les chocs de taux et différentiels seront appliqués progressivement au fil du temps, atteignant 
+                      leur plein effet à partir du 6ème mois pour simuler un scénario réaliste.
+                    </p>
+                    
+                    {validationWarning && (
+                      <p className={cn(
+                        "text-xs",
+                        !isBloomberg && "text-amber-500",
+                        isBloomberg && "text-[#f59e0b]"
+                      )}>Note: {validationWarning}</p>
                     )}
                     
                     {isEditable ? (
                       <>
                         <div>
-                          <Label htmlFor={`${key}-vol`} className="text-xs">Volatility (%)</Label>
+                          <div className="flex items-center gap-1">
+                            <Label htmlFor={`${key}-vol`} className="text-xs">Volatility (%)</Label>
+                            <TooltipProvider>
+                              <TooltipUI>
+                                <TooltipTrigger>
+                                  <HelpCircle size={14} className={isBloomberg ? "text-[#cccccc]" : "text-muted-foreground"} />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="max-w-xs text-xs">{tooltipContent.volatility}</p>
+                                </TooltipContent>
+                              </TooltipUI>
+                            </TooltipProvider>
+                          </div>
                           <Input 
                             id={`${key}-vol`}
                             type="number"
                             value={scenario.volatility * 100}
                             onChange={(e) => handleInputChange('volatility', e.target.value)}
                             step="0.1"
-                            className="h-8 text-sm mt-1"
+                            className={cn(
+                              "h-8 text-sm mt-1",
+                              isBloomberg && "bg-[#111111] border-[#444444] text-[#ff9e00]"
+                            )}
                           />
                         </div>
                         <div>
-                          <Label htmlFor={`${key}-rateShock`} className="text-xs">Rate Shock (%)</Label>
+                          <div className="flex items-center gap-1">
+                            <Label htmlFor={`${key}-rateShock`} className="text-xs">Rate Shock (%)</Label>
+                            <TooltipProvider>
+                              <TooltipUI>
+                                <TooltipTrigger>
+                                  <HelpCircle size={14} className={isBloomberg ? "text-[#cccccc]" : "text-muted-foreground"} />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="max-w-xs text-xs">{tooltipContent.rateShock}</p>
+                                </TooltipContent>
+                              </TooltipUI>
+                            </TooltipProvider>
+                          </div>
                           <Input 
                             id={`${key}-rateShock`}
                             type="number" 
                             value={scenario.rateShock * 100}
                             onChange={(e) => handleInputChange('rateShock', e.target.value)}
                             step="0.1"
-                            className="h-8 text-sm mt-1"
+                            className={cn(
+                              "h-8 text-sm mt-1",
+                              isBloomberg && "bg-[#111111] border-[#444444] text-[#ff9e00]"
+                            )}
                           />
                         </div>
                         <div>
-                          <Label htmlFor={`${key}-diffShock`} className="text-xs">Rate Diff Shock (bps)</Label>
+                          <div className="flex items-center gap-1">
+                            <Label htmlFor={`${key}-diffShock`} className="text-xs">Rate Differential Shock (bps)</Label>
+                            <TooltipProvider>
+                              <TooltipUI>
+                                <TooltipTrigger>
+                                  <HelpCircle size={14} className={isBloomberg ? "text-[#cccccc]" : "text-muted-foreground"} />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="max-w-xs text-xs">{tooltipContent.rateDifferential}</p>
+                                </TooltipContent>
+                              </TooltipUI>
+                            </TooltipProvider>
+                          </div>
                           <Input 
                             id={`${key}-diffShock`}
                             type="number" 
                             value={(scenario.rateDifferentialShock ?? 0) * 10000}
                             onChange={(e) => handleInputChange('rateDifferentialShock', e.target.value)}
                             step="1"
-                            className="h-8 text-sm mt-1"
+                            className={cn(
+                              "h-8 text-sm mt-1",
+                              isBloomberg && "bg-[#111111] border-[#444444] text-[#ff9e00]"
+                            )}
+                          />
+                        </div>
+                        {/* Points Forward Shock (optional) */}
+                        <div>
+                          <div className="flex items-center gap-1">
+                            <Label htmlFor={`${key}-fwdPointsShock`} className="text-xs">Forward Points Shock (bps)</Label>
+                            <TooltipProvider>
+                              <TooltipUI>
+                                <TooltipTrigger>
+                                  <HelpCircle size={14} className={isBloomberg ? "text-[#cccccc]" : "text-muted-foreground"} />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="max-w-xs text-xs">{tooltipContent.forwardPointsShock}</p>
+                                </TooltipContent>
+                              </TooltipUI>
+                            </TooltipProvider>
+                          </div>
+                          <Input 
+                            id={`${key}-fwdPointsShock`}
+                            type="number" 
+                            value={(scenario.forwardPointsShock ?? 0) * 10000}
+                            onChange={(e) => handleInputChange('forwardPointsShock', e.target.value)}
+                            step="1"
+                            className={cn(
+                              "h-8 text-sm mt-1",
+                              isBloomberg && "bg-[#111111] border-[#444444] text-[#ff9e00]"
+                            )}
                           />
                         </div>
                       </>
                     ) : (
-                      <div className="text-xs text-muted-foreground space-y-1 pt-1">
+                      <div className={cn(
+                        "text-xs space-y-1 pt-1",
+                        !isBloomberg && "text-muted-foreground",
+                        isBloomberg && "text-[#cccccc]"
+                      )}>
                         <p>Volatility: {(scenario.volatility * 100).toFixed(1)}%</p>
                         <p>Rate Shock: {(scenario.rateShock * 100).toFixed(1)}%</p>
-                        <p>Rate Diff Shock: {((scenario.rateDifferentialShock ?? 0) * 10000).toFixed(0)} bps</p>
+                        <p>Rate Differential Shock: {((scenario.rateDifferentialShock ?? 0) * 10000).toFixed(0)} bps</p>
+                        {scenario.forwardPointsShock !== undefined && (
+                          <p>Forward Points Shock: {(scenario.forwardPointsShock * 10000).toFixed(0)} bps</p>
+                        )}
                       </div>
                     )}
                     
@@ -170,7 +328,10 @@ const StressTesting: React.FC<Props> = ({ // Update component to use props
                       }} 
                       variant={isActive ? "default" : "outline"}
                       size="sm"
-                      className="w-full mt-2"
+                      className={cn(
+                        "w-full mt-2",
+                        isBloomberg && "bg-[#ff9e00] text-black hover:bg-[#ffb340] rounded-none"
+                      )}
                     >
                       {isActive ? "Run Scenario" : "Apply Scenario"}
                     </Button>
@@ -186,33 +347,41 @@ const StressTesting: React.FC<Props> = ({ // Update component to use props
       {results.length > 0 && (
         <div className="results-section space-y-6">
           {/* === Summary Statistics by Year Table === */}
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>Summary Statistics by Year</CardTitle>
+          <Card className={cn(
+            "mt-6",
+            isBloomberg && "bg-black border-[#444444] rounded-none"
+          )}>
+            <CardHeader className={isBloomberg ? "bg-[#222222] border-b border-[#444444]" : ""}>
+              <CardTitle className={isBloomberg ? "text-[#ff9e00]" : ""}>Summary Statistics by Year</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table className={isBloomberg ? "bloomberg-table" : ""}>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Year</TableHead>
-                    <TableHead className="text-right">Total Cost with Hedging ({quoteCurrency})</TableHead>
-                    <TableHead className="text-right">Total Cost without Hedging ({quoteCurrency})</TableHead>
-                    <TableHead className="text-right">Total P&L ({quoteCurrency})</TableHead>
-                    <TableHead className="text-right">Total Strategy Premium ({quoteCurrency})</TableHead>
-                    <TableHead className="text-right">Cost Reduction (%)</TableHead>
+                  <TableRow className={isBloomberg ? "bloomberg-row" : ""}>
+                    <TableHead className={isBloomberg ? "bloomberg-header" : ""}>Year</TableHead>
+                    <TableHead className={cn("text-right", isBloomberg ? "bloomberg-header" : "")}>Total Cost with Hedging ({quoteCurrency})</TableHead>
+                    <TableHead className={cn("text-right", isBloomberg ? "bloomberg-header" : "")}>Total Cost without Hedging ({quoteCurrency})</TableHead>
+                    <TableHead className={cn("text-right", isBloomberg ? "bloomberg-header" : "")}>Total P&L ({quoteCurrency})</TableHead>
+                    <TableHead className={cn("text-right", isBloomberg ? "bloomberg-header" : "")}>Total Strategy Premium ({quoteCurrency})</TableHead>
+                    <TableHead className={cn("text-right", isBloomberg ? "bloomberg-header" : "")}>Cost Reduction (%)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {Object.entries(yearlySummaryStats).sort(([yearA], [yearB]) => yearA.localeCompare(yearB)).map(([year, summary]: [string, any]) => (
-                    <TableRow key={year}>
-                      <TableCell className="font-medium">{year}</TableCell>
-                      <TableCell className="text-right">{summary.totalHedgedRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                      <TableCell className="text-right">{summary.totalUnhedgedRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                      <TableCell className={`text-right ${summary.totalPnlVsUnhedged >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    <TableRow key={year} className={isBloomberg ? "bloomberg-row" : ""}>
+                      <TableCell className={cn("font-medium", isBloomberg ? "bloomberg-cell" : "")}>{year}</TableCell>
+                      <TableCell className={cn("text-right", isBloomberg ? "bloomberg-cell" : "")}>{summary.totalHedgedRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell className={cn("text-right", isBloomberg ? "bloomberg-cell" : "")}>{summary.totalUnhedgedRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell className={cn(
+                        "text-right",
+                        !isBloomberg && (summary.totalPnlVsUnhedged >= 0 ? 'text-green-600' : 'text-red-600'),
+                        isBloomberg && (summary.totalPnlVsUnhedged >= 0 ? 'bloomberg-up' : 'bloomberg-down'),
+                        isBloomberg && "bloomberg-cell"
+                      )}>
                         {summary.totalPnlVsUnhedged.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </TableCell>
-                      <TableCell className="text-right">{summary.totalPremiumPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                      <TableCell className="text-right">{summary.costReductionPercent.toFixed(2)}%</TableCell>
+                      <TableCell className={cn("text-right", isBloomberg ? "bloomberg-cell" : "")}>{summary.totalPremiumPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell className={cn("text-right", isBloomberg ? "bloomberg-cell" : "")}>{summary.costReductionPercent.toFixed(2)}%</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -404,7 +573,11 @@ const StressTesting: React.FC<Props> = ({ // Update component to use props
       )}
       
       {results.length === 0 && (
-        <div className="p-6 border border-dashed border-border rounded-lg text-center text-muted-foreground min-h-[200px] flex items-center justify-center mt-4">
+        <div className={cn(
+          "p-6 border border-dashed rounded-lg text-center min-h-[200px] flex items-center justify-center mt-4",
+          !isBloomberg && "border-border text-muted-foreground",
+          isBloomberg && "border-[#444444] text-[#cccccc]"
+        )}>
           <p>Apply a stress test scenario and click "Calculate Hedging Results" to see results here.</p>
         </div>
       )}

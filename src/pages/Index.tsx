@@ -157,38 +157,119 @@ type ImpliedVolatility = Record<string, number>;
 export interface MonthlyStats {
   month: string;
   avgPrice: number;
+  volatility: number | null;
 }
 
 // --- Default Stress Scenarios Update ---
 
 const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     base: {
-        name: "Base Case", description: "Normal market conditions",
-        volatility: 0.10, rateDifferentialShock: 0, rateShock: 0, isEditable: true
+        name: "Base Case", 
+        description: "Normal market conditions without particular shock",
+        volatility: 0.10, 
+        rateDifferentialShock: 0, 
+        rateShock: 0, 
+        forwardPointsShock: 0,
+        isEditable: true
     },
     highVol: {
-        name: "High Volatility", description: "Increased volatility (+5%)",
-        volatility: 0.15, rateDifferentialShock: 0, rateShock: 0, isEditable: true
+        name: "High Volatility", 
+        description: "Increased volatility (+5%) - periods of uncertainty, elections, crises",
+        volatility: 0.15, 
+        rateDifferentialShock: 0, 
+        rateShock: 0, 
+        forwardPointsShock: 0,
+        isEditable: true
+    },
+    extremeVol: {
+        name: "Extreme Volatility", 
+        description: "Unstable market conditions - Covid-19 type or financial crisis",
+        volatility: 0.25, 
+        rateDifferentialShock: 0.0025, 
+        rateShock: 0, 
+        forwardPointsShock: 0,
+        isEditable: true
     },
     rateDepreciation: {
-        name: "Foreign Currency Weakens (-5%)", description: "Negative shock to spot rate",
-        volatility: 0.12, rateShock: -0.05, rateDifferentialShock: 0, isEditable: true
+        name: "Foreign Currency Depreciation (-5%)", 
+        description: "Foreign currency weakening - economic deterioration",
+        volatility: 0.12, 
+        rateShock: -0.05, 
+        rateDifferentialShock: 0,
+        forwardPointsShock: 0,
+        isEditable: true
+    },
+    severeDepreciation: {
+        name: "Severe Depreciation (-15%)", 
+        description: "Currency crisis or central bank intervention",
+        volatility: 0.18, 
+        rateShock: -0.15, 
+        rateDifferentialShock: 0.005,
+        forwardPointsShock: 0,
+        isEditable: true
     },
     rateAppreciation: {
-        name: "Foreign Currency Strengthens (+5%)", description: "Positive shock to spot rate",
-        volatility: 0.12, rateShock: 0.05, rateDifferentialShock: 0, isEditable: true
+        name: "Foreign Currency Appreciation (+5%)", 
+        description: "Foreign currency strengthening - economic improvement",
+        volatility: 0.12, 
+        rateShock: 0.05, 
+        rateDifferentialShock: 0,
+        forwardPointsShock: 0,
+        isEditable: true
+    },
+    severeAppreciation: {
+        name: "Severe Appreciation (+15%)", 
+        description: "Strong demand for foreign currency - safe haven",
+        volatility: 0.18, 
+        rateShock: 0.15, 
+        rateDifferentialShock: -0.005,
+        forwardPointsShock: 0,
+        isEditable: true
     },
     diffWidens: {
-        name: "Rate Differential Widens (+100 bps)", description: "Shock increasing (r_d - r_f)",
-        volatility: 0, rateShock: 0, rateDifferentialShock: 0.01, isEditable: true
+        name: "Widened Rate Differential (+100 bps)", 
+        description: "Increased interest rate differential (r_d - r_f)",
+        volatility: 0.11, 
+        rateShock: 0.01, 
+        rateDifferentialShock: 0.01,
+        forwardPointsShock: 0.01,
+        isEditable: true
     },
     diffNarrows: {
-        name: "Rate Differential Narrows (-100 bps)", description: "Shock decreasing (r_d - r_f)",
-        volatility: 0, rateShock: 0, rateDifferentialShock: -0.01, isEditable: true
+        name: "Narrowed Rate Differential (-100 bps)", 
+        description: "Decreased interest rate differential (r_d - r_f)",
+        volatility: 0.11, 
+        rateShock: -0.01, 
+        rateDifferentialShock: -0.01,
+        forwardPointsShock: -0.01,
+        isEditable: true
+    },
+    fwdPointsShock: {
+        name: "Forward Points Shock", 
+        description: "Forward market distortion without spot rate effect",
+        volatility: 0.10, 
+        rateShock: 0, 
+        rateDifferentialShock: 0,
+        forwardPointsShock: 0.02,
+        isEditable: true
+    },
+    recession: {
+        name: "Recession Scenario", 
+        description: "Combination of high volatility and rate decreases",
+        volatility: 0.20, 
+        rateShock: -0.08, 
+        rateDifferentialShock: -0.0075,
+        forwardPointsShock: -0.005,
+        isEditable: true
     },
     custom: {
-        name: "Custom Case", description: "User-defined scenario",
-        volatility: 0.10, rateShock: 0, isCustom: true
+        name: "Custom Scenario", 
+        description: "Define your own stress test parameters",
+        volatility: 0.10, 
+        rateShock: 0, 
+        rateDifferentialShock: 0,
+        forwardPointsShock: 0,
+        isCustom: true
     }
 };
 
@@ -275,6 +356,7 @@ const Index = () => {
   });
 
   const [activeStressTestKey, setActiveStressTestKey] = useState<string | null>(null);
+  const [activeStressTestScenario, setActiveStressTestScenario] = useState<ForexStressTestScenario | null>(null);
 
   const [useImpliedVol, setUseImpliedVol] = useState(false);
   const [impliedVolatilities, setImpliedVolatilities] = useState<ImpliedVolatility>({});
@@ -790,6 +872,23 @@ const Index = () => {
     const initialS = initialSpotRate; // Initial spot rate when page loaded
     const r_d = params.domesticRate / 100;
     const r_f = params.foreignRate / 100;
+    
+    // Appliquer le choc de différentiel de taux si un scénario de stress test est actif
+    let adjustedDomesticRate = r_d;
+    let adjustedForeignRate = r_f;
+    
+    if (activeStressTestScenario) {
+      console.log("Applying stress test scenario:", activeStressTestScenario);
+      if (activeStressTestScenario.rateDifferentialShock !== undefined && activeStressTestScenario.rateDifferentialShock !== 0) {
+        // Le choc élargit ou réduit l'écart entre les taux
+        // Nous utilisons un choc complet (progressFactor = 1) pour le graphique,
+        // car il représente généralement la situation à l'échéance
+        adjustedDomesticRate = r_d + (activeStressTestScenario.rateDifferentialShock / 2);
+        adjustedForeignRate = r_f - (activeStressTestScenario.rateDifferentialShock / 2);
+        console.log(`Adjusted rates: Domestic ${adjustedDomesticRate*100}%, Foreign ${adjustedForeignRate*100}%`);
+      }
+    }
+    
     const months: Date[] = [];
     for (let i = 0; i < params.monthsToHedge; i++) {
         const monthDate = new Date(currentStartDate);
@@ -810,6 +909,22 @@ const Index = () => {
             months.splice(realRates.length);
         } else {
              realRates = realRates.slice(0, params.monthsToHedge);
+        }
+        
+        // Si "Use Implied Volatility" est activé, nous récupérons les volatilités historiques
+        if (useImpliedVolatility) {
+            // Créer un tableau temporaire pour stocker les volatilités historiques pour chaque mois
+            const historicalVols: Record<string, number> = {};
+            
+            // Parcourir les statistiques mensuelles et stocker les volatilités
+            monthlyStats.forEach(stat => {
+                if (stat.volatility !== null) {
+                    historicalVols[stat.month] = stat.volatility * 100; // Convertir en pourcentage
+                }
+            });
+            
+            console.log("Using historical volatilities for implied vol:", historicalVols);
+            setImpliedVolatilities(historicalVols);
         }
     } else if (realRateParams.useSimulation) {
         console.log(`Using Monte Carlo Simulation (${realRateParams.numSimulations} paths, Vol: ${vol})`);
@@ -862,15 +977,68 @@ const Index = () => {
     console.log("Final real rates array being used:", realRates);
     // --- Determine Real Rates --- END
 
+    // Appliquer le choc du stress test aux taux réels si nécessaire
+    if (activeStressTestScenario && activeStressTestScenario.rateShock !== 0) {
+      console.log("Applying rate shock to real rates:", activeStressTestScenario.rateShock);
+      // Application progressive du choc sur les taux réels
+      // Les chocs sont appliqués de manière croissante sur les mois:
+      // - Mois 1: ~16% de l'effet total
+      // - Mois 2: ~33% de l'effet total
+      // - Mois 3: ~50% de l'effet total
+      // - Mois 4: ~67% de l'effet total
+      // - Mois 5: ~83% de l'effet total
+      // - Mois 6 et au-delà: 100% de l'effet total
+      // Cette progression simule la transmission graduelle des chocs économiques dans le temps
+      realRates = realRates.map((rate, index) => {
+        // Calculer un facteur progressif basé sur l'index (mois)
+        // Plus le mois est éloigné, plus l'effet du choc est important
+        const progressFactor = Math.min(1, (index + 1) / Math.min(6, months.length));
+        return rate * (1 + activeStressTestScenario.rateShock * progressFactor);
+      });
+    }
+
     months.forEach((date, index) => {
         const t = (date.getTime() - currentStartDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000) + (1/365.25); // Time to maturity in years
         const realRate = realRates[index];
         const monthlyVolume = params.totalVolume / params.monthsToHedge;
-        const forwardRate = S * Math.exp((r_d - r_f) * t); // Theoretical forward rate
+        
+        // Facteur progressif pour les chocs - varie en fonction du temps
+        const progressFactor = Math.min(1, (index + 1) / Math.min(6, months.length));
+        
+        // Calculer le taux forward en utilisant les taux ajustés avec un effet progressif
+        let currentDomesticRate = r_d;
+        let currentForeignRate = r_f;
+        
+        if (activeStressTestScenario && activeStressTestScenario.rateDifferentialShock !== undefined) {
+          const currentRateDiffShock = activeStressTestScenario.rateDifferentialShock * progressFactor;
+          // Application progressive du choc de différentiel de taux
+          currentDomesticRate = r_d + (currentRateDiffShock / 2);
+          currentForeignRate = r_f - (currentRateDiffShock / 2);
+        }
+        
+        const forwardRate = S * Math.exp((currentDomesticRate - currentForeignRate) * t);
+        
+        // Appliquer le choc direct aux points forwards si spécifié, avec effet progressif
+        let adjustedForwardRate = forwardRate;
+        if (activeStressTestScenario && activeStressTestScenario.forwardPointsShock !== undefined && activeStressTestScenario.forwardPointsShock !== 0) {
+          // Les points forwards sont exprimés en % du taux spot, avec choc progressif
+          const currentFwdPointsShock = activeStressTestScenario.forwardPointsShock * progressFactor;
+          adjustedForwardRate += S * currentFwdPointsShock;
+        }
 
         let totalPremiumPerUnit = 0;
         let totalPayoffPerUnit = 0;
         const optionPricesDetails: ForexResult['optionPrices'] = [];
+
+        // Si nous utilisons des volatilités implicites historiques, récupérons la volatilité pour ce mois
+        let currentVolatility = vol;
+        if (useImpliedVolatility) {
+            const monthKey = date.toISOString().split('T')[0].substring(0, 7); // Format YYYY-MM
+            if (impliedVolatilities[monthKey] !== undefined) {
+                currentVolatility = impliedVolatilities[monthKey] / 100; // Convertir de pourcentage à décimal
+                console.log(`Using implied volatility ${currentVolatility * 100}% for month ${monthKey}`);
+            }
+        }
 
         if (selectedStrategy === 'custom') {
              // --- Custom Strategy Calculation --- START
@@ -953,45 +1121,45 @@ const Index = () => {
                     totalPremiumPerUnit = 0;
                     break;
                 case 'call':
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * (optionQuantity / 100);
+                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * (optionQuantity / 100);
                     break;
                 case 'put':
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * (optionQuantity / 100);
+                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility) * (optionQuantity / 100);
                     break;
                 case 'collarPut':
                 case 'collarCall':
                     // For zero cost collars, calculate the offset premiums
-                    const putCollarPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
-                    const callCollarPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
+                    const putCollarPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility);
+                    const callCollarPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
                     totalPremiumPerUnit = putCollarPremium - callCollarPremium; // Should be near zero for zero-cost collar
                     break;
                 case 'callKO':
                     // Use factor to approximate barrier option premium being cheaper than vanilla
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
+                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * 0.7;
                     break;
                 case 'putKI':
                     // Use factor to approximate barrier option premium being cheaper than vanilla
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
+                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility) * 0.7;
                     break;
                 case 'strangle':
-                    const stranglePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
-                    const strangleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
+                    const stranglePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility);
+                    const strangleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
                     totalPremiumPerUnit = stranglePutPremium + strangleCallPremium;
                     break;
                 case 'straddle':
-                     const straddlePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, vol);
-                     const straddleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeMid, r_d, r_f, t, vol);
+                     const straddlePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, currentVolatility);
+                     const straddleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeMid, r_d, r_f, t, currentVolatility);
                      totalPremiumPerUnit = straddlePutPremium + straddleCallPremium;
                      break;
                 case 'seagull':
-                     const seagullPutBuyPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, vol);
-                     const seagullCallSellPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
-                     const seagullPutSellPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
+                     const seagullPutBuyPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, currentVolatility);
+                     const seagullCallSellPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
+                     const seagullPutSellPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility);
                      totalPremiumPerUnit = seagullPutBuyPremium - seagullCallSellPremium - seagullPutSellPremium;
                      break;
                 case 'callPutKI_KO':
-                     const callKOPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
-                     const putKIPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
+                     const callKOPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * 0.7;
+                     const putKIPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility) * 0.7;
                      totalPremiumPerUnit = callKOPremium + putKIPremium;
                      break;
                 default:
@@ -1004,7 +1172,7 @@ const Index = () => {
              // 3. Calculate Total Payoff Per Unit based on realRate
              switch (selectedStrategy) {
                  case 'forward':
-                     totalPayoffPerUnit = forwardRate - realRate;
+                     totalPayoffPerUnit = adjustedForwardRate - realRate;
                      break;
                  case 'call':
                      totalPayoffPerUnit = Math.max(0, realRate - strikeUpper) * (optionQuantity / 100);
@@ -1065,7 +1233,7 @@ const Index = () => {
         resultsArray.push({
             date: date.toISOString().split('T')[0],
             timeToMaturity: t,
-            forwardRate,
+            forwardRate: adjustedForwardRate,
             realRate, // <-- This is the key field that should show the simulated rate!
             optionPrices: optionPricesDetails,
             strategyPrice: totalPremiumPerUnit,
@@ -1077,6 +1245,7 @@ const Index = () => {
             hedgedRevenue,
             pnlVsUnhedged,
             effectiveRate,
+            impliedVolatility: useImpliedVolatility ? (currentVolatility * 100) : undefined, // Ajouter la volatilité en pourcentage
         });
         // --- Common Result Calculation --- END
     });
@@ -1102,6 +1271,20 @@ const Index = () => {
     const initialS = initialSpotRate; // Spot rate when strategy was initiated (for strikes based on %)
     const vol = realRateParams.volatility / 100;
 
+    // Appliquer le choc de différentiel de taux si un scénario de stress test est actif
+    let adjustedDomesticRate = r_d;
+    let adjustedForeignRate = r_f;
+    
+    if (activeStressTestScenario) {
+      if (activeStressTestScenario.rateDifferentialShock !== undefined && activeStressTestScenario.rateDifferentialShock !== 0) {
+        // Le choc élargit ou réduit l'écart entre les taux
+        // Nous utilisons un choc complet (progressFactor = 1) pour le graphique,
+        // car il représente généralement la situation à l'échéance
+        adjustedDomesticRate = r_d + (activeStressTestScenario.rateDifferentialShock / 2);
+        adjustedForeignRate = r_f - (activeStressTestScenario.rateDifferentialShock / 2);
+      }
+    }
+
     // Get strategy parameters from params object
     const strikeUpper = params.strikeUpper || params.spotRate * 1.05;
     const strikeLower = params.strikeLower || params.spotRate * 0.95;
@@ -1111,7 +1294,14 @@ const Index = () => {
     const optionQuantity = params.optionQuantity || 100;
     const quantityFactor = optionQuantity / 100;
     
-    const chartForwardRate = spot * Math.exp((r_d - r_f) * t);
+    const chartForwardRate = spot * Math.exp((adjustedDomesticRate - adjustedForeignRate) * t);
+    
+    // Appliquer le choc direct aux points forwards si spécifié
+    let adjustedChartForwardRate = chartForwardRate;
+    if (activeStressTestScenario && activeStressTestScenario.forwardPointsShock !== undefined && activeStressTestScenario.forwardPointsShock !== 0) {
+      // Les points forwards sont exprimés en % du taux spot
+      adjustedChartForwardRate += spot * activeStressTestScenario.forwardPointsShock;
+    }
 
     for (let i = 0; i <= payoffPoints; i++) {
         const currentSpot = spot - range + i * step; // The spot rate for this point on the X-axis
@@ -1177,7 +1367,7 @@ const Index = () => {
             switch (selectedStrategy) {
                 case 'forward': 
                     premiumCost = 0; 
-                    optionDetailsForChart['Forward Rate'] = chartForwardRate; 
+                    optionDetailsForChart['Forward Rate'] = adjustedChartForwardRate; 
                     break;
                 case 'call': 
                     // For a long call, the premium is negative (cost)
@@ -1247,7 +1437,7 @@ const Index = () => {
              // IMPORTANT: We're calculating from the perspective of managing FX risk (buying options)
              switch (selectedStrategy) {
                  case 'forward': 
-                     payoffAtSpot = chartForwardRate - currentSpot; 
+                     payoffAtSpot = adjustedChartForwardRate - currentSpot; 
                      break;
                  case 'call': 
                      // Long call: we gain when spot > strike (pay strike instead of spot)
@@ -1341,19 +1531,18 @@ const Index = () => {
     setOriginalParams(params);
     setOriginalRealRateParams(realRateParams);
 
-    const shockedSpotRate = params.spotRate * (1 + scenario.rateShock);
+    // Modifications:
+    // 1. On n'applique plus le choc directement au taux spot
+    // 2. On stocke le scénario actif pour l'appliquer lors du calcul des résultats
 
-    const baseDifferential = (params.domesticRate / 100) - (params.foreignRate / 100);
-    const shockedDifferential = baseDifferential + (scenario.rateDifferentialShock || 0);
-
-    setParams(prev => ({
-        ...prev,
-        spotRate: shockedSpotRate,
-    }));
+    // Mise à jour de la volatilité uniquement
     setRealRateParams(prev => ({
         ...prev,
-        volatility: scenario.volatility,
+        volatility: scenario.volatility * 100, // Convertir en pourcentage
     }));
+    
+    // On conserve le scénario pour l'appliquer lors du calcul
+    setActiveStressTestScenario(scenario);
 
     setTimeout(() => calculateResults(), 0);
   };
@@ -1365,10 +1554,12 @@ const Index = () => {
         setOriginalParams(null);
         setOriginalRealRateParams(null);
         setActiveStressTestKey(null);
+        setActiveStressTestScenario(null);
 
         setTimeout(() => calculateResults(), 0);
     } else {
         setActiveStressTestKey(null);
+        setActiveStressTestScenario(null);
     }
   };
 
@@ -2610,6 +2801,11 @@ const Index = () => {
                  setActiveTab('strategy');
                  setTimeout(calculateResults, 0);
              }}
+            results={results}
+            baseCurrency={baseCurrency}
+            quoteCurrency={quoteCurrency}
+            totalSummaryStats={totalSummaryStats}
+            yearlySummaryStats={yearlySummaryStats}
           />
         </TabsContent>
       </Tabs>

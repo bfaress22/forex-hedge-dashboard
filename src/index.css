@@ -1,4 +1,3 @@
-
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
@@ -85,6 +84,49 @@
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
+  
+  /* Bloomberg Terminal Theme */
+  .bloomberg {
+    --background: 0 0% 0%;
+    --foreground: 33 100% 50%;
+
+    --card: 0 0% 7%;
+    --card-foreground: 33 100% 50%;
+
+    --popover: 0 0% 7%;
+    --popover-foreground: 33 100% 50%;
+
+    --primary: 33 100% 50%;
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 13%;
+    --secondary-foreground: 33 100% 50%;
+
+    --muted: 0 0% 20%;
+    --muted-foreground: 0 0% 80%;
+
+    --accent: 0 0% 20%;
+    --accent-foreground: 33 100% 50%;
+
+    --destructive: 0 100% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 27%;
+    --input: 0 0% 13%;
+    --ring: 33 100% 50%;
+    
+    --sidebar-background: 0 0% 7%;
+    --sidebar-foreground: 33 100% 50%;
+    --sidebar-primary: 33 100% 50%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 20%;
+    --sidebar-accent-foreground: 33 100% 50%;
+    --sidebar-border: 0 0% 27%;
+    --sidebar-ring: 33 100% 50%;
+    
+    /* Override border radius for Bloomberg style */
+    --radius: 0;
+  }
 }
 
 @layer base {
@@ -124,6 +166,14 @@
     font-weight: 400;
     font-style: normal;
   }
+  
+  /* Bloomberg Terminal Font */
+  @font-face {
+    font-family: 'Bloomberg Terminal';
+    src: local('Consolas'), local('Monaco'), local('Courier New'), local('monospace');
+    font-weight: 400;
+    font-style: normal;
+  }
 }
 
 @layer components {
@@ -158,6 +208,68 @@
   
   .custom-scrollbar {
     @apply scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent;
+  }
+  
+  /* Bloomberg Terminal specific components */
+  .bloomberg .glass-effect {
+    @apply bg-black bg-opacity-80 border-[#444444] border-opacity-80;
+  }
+  
+  .bloomberg .card {
+    @apply border-[#444444] rounded-none;
+  }
+  
+  .bloomberg .btn-primary {
+    @apply rounded-none;
+  }
+  
+  .bloomberg .btn-secondary {
+    @apply rounded-none;
+  }
+  
+  .bloomberg .input-field {
+    @apply rounded-none;
+  }
+  
+  .bloomberg-header {
+    @apply bg-[#222222] text-[#ff9e00] border-b border-[#444444] p-2 font-bold;
+  }
+  
+  .bloomberg-row {
+    @apply bg-black text-[#ff9e00] border-b border-[#444444] p-2;
+  }
+  
+  .bloomberg-cell {
+    @apply p-2 border-r border-[#444444];
+  }
+  
+  .bloomberg-table {
+    @apply w-full border border-[#444444] bg-black;
+  }
+  
+  .bloomberg-up {
+    @apply text-[#00ba3f];
+  }
+  
+  .bloomberg-down {
+    @apply text-[#ff3d3d];
+  }
+  
+  .bloomberg-neutral {
+    @apply text-[#ff9e00];
+  }
+  
+  .bloomberg .recharts-cartesian-grid-horizontal line,
+  .bloomberg .recharts-cartesian-grid-vertical line {
+    @apply stroke-[#444444];
+  }
+  
+  .bloomberg .recharts-text {
+    @apply fill-[#ff9e00];
+  }
+  
+  .bloomberg .recharts-default-tooltip {
+    @apply bg-[#111111] border-[#444444] text-[#ff9e00];
   }
 }
 
