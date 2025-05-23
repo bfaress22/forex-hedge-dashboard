@@ -3,6 +3,7 @@ import CustomStrategyOption, { OptionComponent } from "./CustomStrategyOption";
 import { Plus } from "lucide-react";
 import { GlassContainer } from "@/components/ui/layout";
 import { BARRIER_PRICING_MODELS, setPricingModel } from "@/utils/barrierOptionCalculations";
+import { VANILLA_PRICING_MODELS, setVanillaPricingModel } from "@/utils/garmanKohlhagen";
 
 interface CustomStrategyBuilderProps {
   spot: number;
@@ -38,8 +39,11 @@ const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({
     },
   ]);
   
-  // Only keep barrier option pricing model in globalParams
-  const [pricingModel, setPricingModelState] = useState(BARRIER_PRICING_MODELS.MONTE_CARLO);
+  // Barrier option pricing model
+  const [barrierPricingModel, setBarrierPricingModelState] = useState(BARRIER_PRICING_MODELS.MONTE_CARLO);
+  
+  // Vanilla option pricing model
+  const [vanillaPricingModel, setVanillaPricingModelState] = useState(VANILLA_PRICING_MODELS.CLOSED_FORM);
   
   const handleAddOption = () => {
     const newOption: OptionComponent = {
@@ -68,42 +72,70 @@ const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({
     onStrategyChange(updatedOptions, getGlobalParams());
   };
 
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleBarrierModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const model = e.target.value;
     setPricingModel(model); // Set the model globally
-    setPricingModelState(model);
-    onStrategyChange(options, getGlobalParams(model));
+    setBarrierPricingModelState(model);
+    onStrategyChange(options, getGlobalParams(model, vanillaPricingModel));
+  };
+
+  const handleVanillaModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const model = e.target.value;
+    setVanillaPricingModel(model); // Set the model globally
+    setVanillaPricingModelState(model);
+    onStrategyChange(options, getGlobalParams(barrierPricingModel, model));
   };
 
   // Helper function to get current global params
-  const getGlobalParams = (model = pricingModel) => {
+  const getGlobalParams = (barrierModel = barrierPricingModel, vanillaModel = vanillaPricingModel) => {
     return {
       maturity,
       r1: domesticRate / 100, // Convert from percentage to decimal
       r2: foreignRate / 100,  // Convert from percentage to decimal
       notional,
       notionalQuote,
-      pricingModel: model
+      barrierPricingModel: barrierModel,
+      vanillaPricingModel: vanillaModel
     };
   };
 
   useEffect(() => {
     // Set the pricing model globally when component mounts or when parameters change
-    setPricingModel(pricingModel);
+    setPricingModel(barrierPricingModel);
+    setVanillaPricingModel(vanillaPricingModel);
     onStrategyChange(options, getGlobalParams());
   }, [maturity, domesticRate, foreignRate, notional, notionalQuote]);
 
   return (
     <>
       <GlassContainer className="mb-8">
-        <h3 className="font-bold text-xl mb-4">Barrier Option Pricing</h3>
-        <div className="grid grid-cols-1 gap-4">
+        <h3 className="font-bold text-xl mb-4">Option Pricing Models</h3>
+        <div className="grid grid-cols-1 gap-6">
+          {/* Vanilla Option Pricing */}
+          <div className="border-b pb-4">
+            <label className="block text-sm font-medium mb-1">
+              Vanilla Option Pricing Model
+              <select
+                value={vanillaPricingModel}
+                onChange={handleVanillaModelChange}
+                className="input-field mt-1 w-full"
+              >
+                <option value={VANILLA_PRICING_MODELS.CLOSED_FORM}>Garman-Kohlhagen (Closed-Form)</option>
+                <option value={VANILLA_PRICING_MODELS.MONTE_CARLO}>Monte Carlo Simulation</option>
+                <span className="text-xs text-muted-foreground mt-1 block">
+                  Garman-Kohlhagen est plus rapide, Monte Carlo permet de vérifier les résultats
+                </span>
+              </select>
+            </label>
+          </div>
+
+          {/* Barrier Option Pricing */}
           <div>
             <label className="block text-sm font-medium mb-1">
               Barrier Option Pricing Model
               <select
-                value={pricingModel}
-                onChange={handleModelChange}
+                value={barrierPricingModel}
+                onChange={handleBarrierModelChange}
                 className="input-field mt-1 w-full"
               >
                 <option value={BARRIER_PRICING_MODELS.MONTE_CARLO}>Monte Carlo Simulation</option>

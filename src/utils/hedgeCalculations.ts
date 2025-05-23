@@ -1,4 +1,4 @@
-import { erf } from 'mathjs';
+import { calculateCall as gkCall, calculatePut as gkPut, calculateForward as gkForward, cnd } from './garmanKohlhagen';
 
 // Black-Scholes option pricing for Forex
 export const calculateD1D2 = (S: number, K: number, T: number, r1: number, r2: number, sigma: number) => {
@@ -8,22 +8,19 @@ export const calculateD1D2 = (S: number, K: number, T: number, r1: number, r2: n
 };
 
 export const calculateCall = (S: number, K: number, T: number, r1: number, r2: number, sigma: number) => {
-  const [d1, d2] = calculateD1D2(S, K, T, r1, r2, sigma);
-  const nd1 = (1 + erf(d1/Math.sqrt(2)))/2;
-  const nd2 = (1 + erf(d2/Math.sqrt(2)))/2;
-  return S * Math.exp(-r2*T) * nd1 - K * Math.exp(-r1*T) * nd2;
+  // Utiliser directement les fonctions de garmanKohlhagen.ts qui respectent le modèle sélectionné
+  // Importer les bonnes fonctions pour éviter la confusion avec les aliases
+  return gkCall(S, K, T, r1, r2, sigma);
 };
 
 export const calculatePut = (S: number, K: number, T: number, r1: number, r2: number, sigma: number) => {
-  const [d1, d2] = calculateD1D2(S, K, T, r1, r2, sigma);
-  const nd1 = (1 + erf(-d1/Math.sqrt(2)))/2;
-  const nd2 = (1 + erf(-d2/Math.sqrt(2)))/2;
-  return K * Math.exp(-r1*T) * nd2 - S * Math.exp(-r2*T) * nd1;
+  // Utiliser directement les fonctions de garmanKohlhagen.ts qui respectent le modèle sélectionné
+  return gkPut(S, K, T, r1, r2, sigma);
 };
 
 // Forward rate calculation
 export const calculateForward = (S: number, T: number, r1: number, r2: number) => {
-  return S * Math.exp((r1 - r2) * T);
+  return gkForward(S, T, r1, r2);
 };
 
 // New function to calculate barrier option prices

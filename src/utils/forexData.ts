@@ -41,6 +41,12 @@ export const FOREX_PAIRS = {
 
 // Available hedging strategies
 export const STRATEGIES = {
+    "custom": {
+        name: "Custom Strategy",
+        description: "Build your own strategy by adding options",
+        needsStrikes: false,
+        isCustom: true
+    },
     "collarPut": {
         name: "Zero Cost Collar (Put Fixed)",
         description: "Protection against downside with fixed put strike. Call strike adjusts automatically to achieve zero cost.",
@@ -96,12 +102,6 @@ export const STRATEGIES = {
         description: "Combines a Call KO and a Put KI to benefit from a downside to a barrier",
         needsStrikes: true,
         needsBarrier: true
-    },
-    "custom": {
-        name: "Custom Strategy",
-        description: "Build your own strategy by adding options",
-        needsStrikes: false,
-        isCustom: true
     }
 };
 

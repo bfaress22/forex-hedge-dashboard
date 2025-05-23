@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { HoverCard, Heading, ValueDisplay } from "@/components/ui/layout";
 import { STRATEGIES, OPTION_TYPES } from "@/utils/forexData";
 import { BARRIER_PRICING_MODELS } from "@/utils/barrierOptionCalculations";
+import { VANILLA_PRICING_MODELS } from "@/utils/garmanKohlhagen";
 import { Info, X } from "lucide-react";
 
 interface StrategyInfoProps {
@@ -47,7 +48,7 @@ const StrategyInfo = ({ selectedStrategy, results, params, name, description }: 
           
           <div className="space-y-6">
             <div>
-              <h3 className="text-lg font-medium mb-2">Black-Scholes Formulas</h3>
+              <h3 className="text-lg font-medium mb-2">Garman-Kohlhagen Formulas (1983)</h3>
               <div className="bg-muted/30 p-3 rounded-lg font-mono text-sm">
                 <p>Call Price = S·e<sup>-r₂T</sup>·N(d₁) - K·e<sup>-r₁T</sup>·N(d₂)</p>
                 <p>Put Price = K·e<sup>-r₁T</sup>·N(-d₂) - S·e<sup>-r₂T</sup>·N(-d₁)</p>
@@ -56,8 +57,8 @@ const StrategyInfo = ({ selectedStrategy, results, params, name, description }: 
                 <p>d₂ = d₁ - σ·√T</p>
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
-                S = spot price, K = strike price, T = maturity, r₁ = base currency rate, 
-                r₂ = quote currency rate, σ = volatility, N() = cumulative normal distribution
+                S = spot price, K = strike price, T = maturity, r₁ = domestic interest rate, 
+                r₂ = foreign interest rate, σ = volatility, N() = cumulative normal distribution
               </p>
             </div>
             
@@ -84,11 +85,24 @@ const StrategyInfo = ({ selectedStrategy, results, params, name, description }: 
             <div>
               <h3 className="text-lg font-medium mb-2">Monte Carlo Simulation</h3>
               <div className="bg-muted/30 p-3 rounded-lg text-sm">
-                <p>1. Simulate {10000} price paths using geometric Brownian motion:</p>
+                <p>1. Simulate price paths using geometric Brownian motion:</p>
                 <p className="font-mono mt-1">S(t+Δt) = S(t)·exp[(r₁-r₂-σ²/2)·Δt + σ·√Δt·Z]</p>
-                <p className="mt-2">2. For each path, check if barrier conditions are met</p>
-                <p className="mt-1">3. Calculate payoff for each path</p>
-                <p className="mt-1">4. Average the payoffs and discount to present value</p>
+                
+                <div className="mt-3">
+                  <p className="font-bold">For vanilla options:</p>
+                  <p className="ml-4">• Simulate {10000} paths to expiration date</p>
+                  <p className="ml-4">• Calculate payoff at expiration for each path</p>
+                  <p className="ml-4">• Average the payoffs and discount to present value</p>
+                  <p className="ml-4 mt-1 text-xs text-muted-foreground">Same Monte Carlo implementation is used for both vanilla and barrier options</p>
+                </div>
+                
+                <div className="mt-3">
+                  <p className="font-bold">For barrier options:</p> 
+                  <p className="ml-4">• Simulate with smaller time steps to capture barrier events</p>
+                  <p className="ml-4">• For each path, check if barrier conditions are met</p>
+                  <p className="ml-4">• Calculate conditional payoffs based on barrier events</p>
+                  <p className="ml-4">• Average the payoffs and discount to present value</p>
+                </div>
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
                 Z = standard normal random variable, Δt = time step
@@ -123,20 +137,31 @@ const StrategyInfo = ({ selectedStrategy, results, params, name, description }: 
       option.type.includes("KO") || option.type.includes("KI")
     );
 
+    // Determine if we have any vanilla options
+    const hasVanillaOptions = results.options.some((option: any) => 
+      option.type === "call" || option.type === "put"
+    );
+
     // Get model name for display
     const getPricingModelName = (modelCode: string) => {
       switch(modelCode) {
         case BARRIER_PRICING_MODELS.MONTE_CARLO:
+        case VANILLA_PRICING_MODELS.MONTE_CARLO:
           return "Monte Carlo";
         case BARRIER_PRICING_MODELS.CLOSED_FORM:
           return "Closed-Form Analytical";
+        case VANILLA_PRICING_MODELS.CLOSED_FORM:
+          return "Garman-Kohlhagen";
         default:
           return "Standard";
       }
     };
 
-    const pricingModel = results.globalParams?.pricingModel || 
+    const barrierPricingModel = results.globalParams?.barrierPricingModel || 
                          BARRIER_PRICING_MODELS.MONTE_CARLO;
+                         
+    const vanillaPricingModel = results.globalParams?.vanillaPricingModel || 
+                         VANILLA_PRICING_MODELS.CLOSED_FORM;
 
     return (
       <div className="space-y-4">
@@ -153,11 +178,30 @@ const StrategyInfo = ({ selectedStrategy, results, params, name, description }: 
           />
         </div>
 
-        {hasBarrierOptions && (
+        {hasVanillaOptions && (
           <div className="bg-primary/10 border border-primary/30 p-3 rounded-lg text-sm flex justify-between items-center">
             <div>
+              <span className="font-medium">Vanilla Option Pricing Model: </span>
+              <span className="text-primary">{getPricingModelName(vanillaPricingModel)}</span>
+              <p className="text-xs text-muted-foreground mt-1">
+                This affects the calculation of premium for standard calls and puts.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowPricingFormulas(true)}
+              className="flex items-center text-xs text-primary hover:text-primary/80 transition-colors"
+            >
+              <Info size={14} className="mr-1" />
+              View Formulas
+            </button>
+          </div>
+        )}
+
+        {hasBarrierOptions && (
+          <div className="bg-primary/10 border border-primary/30 p-3 rounded-lg text-sm flex justify-between items-center mt-3">
+            <div>
               <span className="font-medium">Barrier Option Pricing Model: </span>
-              <span className="text-primary">{getPricingModelName(pricingModel)}</span>
+              <span className="text-primary">{getPricingModelName(barrierPricingModel)}</span>
               <p className="text-xs text-muted-foreground mt-1">
                 This affects the calculation of premium for barrier options.
               </p>

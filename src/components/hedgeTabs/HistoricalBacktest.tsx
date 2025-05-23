@@ -113,7 +113,7 @@ const HistoricalBacktest: React.FC<Props> = ({
   // Calcul des statistiques mensuelles à partir des données historiques
   const calculateMonthlyStats = (data: HistoricalDataPoint[]): MonthlyStats[] => {
     const monthlyData: { [key: string]: number[] } = {};
-    
+
     // Regrouper les prix par mois
     data.forEach(point => {
       const date = new Date(point.date);
@@ -121,16 +121,16 @@ const HistoricalBacktest: React.FC<Props> = ({
       
       if (!monthlyData[monthKey]) {
         monthlyData[monthKey] = [];
-      }
+        }
       monthlyData[monthKey].push(point.price);
-    });
-    
+      });
+
     // Calculer les statistiques pour chaque mois
     const stats: MonthlyStats[] = [];
     for (const month in monthlyData) {
       const prices = monthlyData[month];
       const avgPrice = prices.reduce((sum, price) => sum + price, 0) / prices.length;
-      
+
       // Calculer la volatilité (écart-type des rendements journaliers)
       let volatility = null;
       if (prices.length > 1) {
@@ -144,7 +144,7 @@ const HistoricalBacktest: React.FC<Props> = ({
       }
       
       stats.push({
-        month,
+          month,
         avgPrice,
         volatility: volatility
       });

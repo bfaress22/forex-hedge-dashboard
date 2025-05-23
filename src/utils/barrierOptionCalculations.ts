@@ -1,4 +1,5 @@
 // Calculations for barrier options
+import { cnd } from './garmanKohlhagen';
 
 // Models for barrier option pricing
 export const BARRIER_PRICING_MODELS = {
@@ -18,7 +19,239 @@ export const setPricingModel = (model: string) => {
   return false;
 };
 
-// Function to calculate the price of a barrier option
+/**
+ * Calcule le prix d'une option à barrière simple selon le modèle analytique
+ * Implémentation de la formule "Standard Barrier" de Haug (1997)
+ * 
+ * @param typeFlag Type d'option: "cdi", "cui", "pdi", "pui", "cdo", "cuo", "pdo", "puo"
+ *                 c/p = call/put, d/u = down/up, i/o = in/out
+ * @param S Spot price (prix actuel)
+ * @param X Strike price (prix d'exercice)
+ * @param H Barrier price (niveau de barrière)
+ * @param T Time to maturity (temps jusqu'à échéance en années)
+ * @param r Domestic interest rate (taux d'intérêt domestique)
+ * @param b Cost of carry (b = r - rf pour les options sur devise)
+ * @param v Volatility (volatilité)
+ * @param K Rebate (remboursement si la barrière est touchée pour les KO, ou non touchée pour les KI)
+ * @returns Prix de l'option à barrière
+ */
+export function standardBarrier(
+  typeFlag: string,
+  S: number,
+  X: number,
+  H: number,
+  T: number,
+  r: number,
+  rf: number,
+  v: number,
+  K: number = 0
+): number {
+  // Validation des entrées
+  if (S <= 0 || X <= 0 || H <= 0 || T <= 0 || v <= 0) {
+    console.error('Invalid inputs for barrier option pricing:', { S, X, H, T, v });
+    return 0;
+  }
+
+  // b est le cost of carry (b = r - rf pour les options sur devise)
+  const b = r - rf;
+
+  // Prévenir les problèmes numériques avec des valeurs trop petites
+  const minValue = 1e-10;
+  T = Math.max(T, minValue);
+  v = Math.max(v, minValue);
+
+  // Calcul des termes du modèle
+  const mu = (b - v * v / 2) / (v * v);
+  const lambda = Math.sqrt(mu * mu + 2 * r / (v * v));
+  const X1 = Math.log(S / X) / (v * Math.sqrt(T)) + (1 + mu) * v * Math.sqrt(T);
+  const X2 = Math.log(S / H) / (v * Math.sqrt(T)) + (1 + mu) * v * Math.sqrt(T);
+  const y1 = Math.log(H * H / (S * X)) / (v * Math.sqrt(T)) + (1 + mu) * v * Math.sqrt(T);
+  const y2 = Math.log(H / S) / (v * Math.sqrt(T)) + (1 + mu) * v * Math.sqrt(T);
+  const Z = Math.log(H / S) / (v * Math.sqrt(T)) + lambda * v * Math.sqrt(T);
+
+  // Déterminer les paramètres eta et phi en fonction du type d'option
+  let eta = 0;
+  let phi = 0;
+
+  if (typeFlag === "cdi" || typeFlag === "cdo") {
+    eta = 1;
+    phi = 1;
+  } else if (typeFlag === "cui" || typeFlag === "cuo") {
+    eta = -1;
+    phi = 1;
+  } else if (typeFlag === "pdi" || typeFlag === "pdo") {
+    eta = 1;
+    phi = -1;
+  } else if (typeFlag === "pui" || typeFlag === "puo") {
+    eta = -1;
+    phi = -1;
+  } else {
+    console.error('Unknown barrier option type:', typeFlag);
+    return 0;
+  }
+
+  // Calcul des termes de la formule
+  const f1 = phi * S * Math.exp((b - r) * T) * cnd(phi * X1) - phi * X * Math.exp(-r * T) * cnd(phi * X1 - phi * v * Math.sqrt(T));
+  const f2 = phi * S * Math.exp((b - r) * T) * cnd(phi * X2) - phi * X * Math.exp(-r * T) * cnd(phi * X2 - phi * v * Math.sqrt(T));
+  const f3 = phi * S * Math.exp((b - r) * T) * Math.pow(H / S, 2 * (mu + 1)) * cnd(eta * y1) - phi * X * Math.exp(-r * T) * Math.pow(H / S, 2 * mu) * cnd(eta * y1 - eta * v * Math.sqrt(T));
+  const f4 = phi * S * Math.exp((b - r) * T) * Math.pow(H / S, 2 * (mu + 1)) * cnd(eta * y2) - phi * X * Math.exp(-r * T) * Math.pow(H / S, 2 * mu) * cnd(eta * y2 - eta * v * Math.sqrt(T));
+  const f5 = K * Math.exp(-r * T) * (cnd(eta * X2 - eta * v * Math.sqrt(T)) - Math.pow(H / S, 2 * mu) * cnd(eta * y2 - eta * v * Math.sqrt(T)));
+  const f6 = K * (Math.pow(H / S, mu + lambda) * cnd(eta * Z) + Math.pow(H / S, mu - lambda) * cnd(eta * Z - 2 * eta * lambda * v * Math.sqrt(T)));
+
+  // Calcul du prix en fonction du type d'option et des relations entre strike et barrière
+  let price = 0;
+
+  if (X > H) {
+    switch (typeFlag) {
+      case "cdi": price = f3 + f5; break;
+      case "cui": price = f1 + f5; break;
+      case "pdi": price = f2 - f3 + f4 + f5; break;
+      case "pui": price = f1 - f2 + f4 + f5; break;
+      case "cdo": price = f1 - f3 + f6; break;
+      case "cuo": price = f6; break;
+      case "pdo": price = f1 - f2 + f3 - f4 + f6; break;
+      case "puo": price = f2 - f4 + f6; break;
+    }
+  } else { // X <= H
+    switch (typeFlag) {
+      case "cdi": price = f1 - f2 + f4 + f5; break;
+      case "cui": price = f2 - f3 + f4 + f5; break;
+      case "pdi": price = f1 + f5; break;
+      case "pui": price = f3 + f5; break;
+      case "cdo": price = f2 + f6 - f4; break;
+      case "cuo": price = f1 - f2 + f3 - f4 + f6; break;
+      case "pdo": price = f6; break;
+      case "puo": price = f1 - f3 + f6; break;
+    }
+  }
+
+  return Math.max(0, price);
+}
+
+/**
+ * Calcule le prix d'une option à double barrière
+ * Implémentation de la formule de double barrière de Haug (1997)
+ * 
+ * @param typeFlag Type d'option: "co", "ci", "po", "pi" (c/p = call/put, i/o = in/out)
+ * @param S Spot price (prix actuel)
+ * @param X Strike price (prix d'exercice)
+ * @param L Lower barrier (barrière inférieure)
+ * @param U Upper barrier (barrière supérieure)
+ * @param T Time to maturity (temps jusqu'à échéance en années)
+ * @param r Domestic interest rate (taux d'intérêt domestique)
+ * @param rf Foreign interest rate (taux d'intérêt étranger)
+ * @param v Volatility (volatilité)
+ * @param delta1 Dividend rate for upper barrier (généralement 0 pour les options FX)
+ * @param delta2 Dividend rate for lower barrier (généralement 0 pour les options FX)
+ * @returns Prix de l'option à double barrière
+ */
+export function doubleBarrier(
+  typeFlag: string,
+  S: number,
+  X: number,
+  L: number,
+  U: number,
+  T: number,
+  r: number,
+  rf: number,
+  v: number,
+  delta1: number = 0,
+  delta2: number = 0
+): number {
+  // Validation des entrées
+  if (S <= 0 || X <= 0 || L <= 0 || U <= 0 || L >= U || T <= 0 || v <= 0) {
+    console.error('Invalid inputs for double barrier option pricing:', { S, X, L, U, T, v });
+    return 0;
+  }
+  
+  // b est le cost of carry (b = r - rf pour les options sur devise)
+  const b = r - rf;
+
+  // Prévenir les problèmes numériques avec des valeurs trop petites
+  const minValue = 1e-10;
+  T = Math.max(T, minValue);
+  v = Math.max(v, minValue);
+
+  const F = U * Math.exp(delta1 * T);
+  const E = L * Math.exp(delta1 * T);
+  
+  // Nombre de termes à calculer dans la somme (n de -5 à 5 dans le code VBA)
+  const numTerms = 5;
+  
+  let sum1 = 0;
+  let sum2 = 0;
+  
+  if (typeFlag === "co" || typeFlag === "ci") {
+    for (let n = -numTerms; n <= numTerms; n++) {
+      const d1 = (Math.log(S * Math.pow(U, 2 * n) / (X * Math.pow(L, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      const d2 = (Math.log(S * Math.pow(U, 2 * n) / (F * Math.pow(L, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      const d3 = (Math.log(Math.pow(L, 2 * n + 2) / (X * S * Math.pow(U, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      const d4 = (Math.log(Math.pow(L, 2 * n + 2) / (F * S * Math.pow(U, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      
+      const mu1 = 2 * (b - delta2 - n * (delta1 - delta2)) / (v * v) + 1;
+      const mu2 = 2 * n * (delta1 - delta2) / (v * v);
+      const mu3 = 2 * (b - delta2 + n * (delta1 - delta2)) / (v * v) + 1;
+      
+      sum1 += Math.pow(U / L, n * mu1) * Math.pow(L / S, mu2) * (cnd(d1) - cnd(d2)) - 
+              Math.pow(L / (U * S), n * mu3) * (cnd(d3) - cnd(d4));
+              
+      sum2 += Math.pow(U / L, n * (mu1 - 2)) * Math.pow(L / S, mu2) * (cnd(d1 - v * Math.sqrt(T)) - cnd(d2 - v * Math.sqrt(T))) - 
+              Math.pow(L / (U * S), n * (mu3 - 2)) * (cnd(d3 - v * Math.sqrt(T)) - cnd(d4 - v * Math.sqrt(T)));
+    }
+  } else if (typeFlag === "po" || typeFlag === "pi") {
+    for (let n = -numTerms; n <= numTerms; n++) {
+      const d1 = (Math.log(S * Math.pow(U, 2 * n) / (E * Math.pow(L, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      const d2 = (Math.log(S * Math.pow(U, 2 * n) / (X * Math.pow(L, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      const d3 = (Math.log(Math.pow(L, 2 * n + 2) / (E * S * Math.pow(U, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      const d4 = (Math.log(Math.pow(L, 2 * n + 2) / (X * S * Math.pow(U, 2 * n))) + (b + v * v / 2) * T) / (v * Math.sqrt(T));
+      
+      const mu1 = 2 * (b - delta2 - n * (delta1 - delta2)) / (v * v) + 1;
+      const mu2 = 2 * n * (delta1 - delta2) / (v * v);
+      const mu3 = 2 * (b - delta2 + n * (delta1 - delta2)) / (v * v) + 1;
+      
+      sum1 += Math.pow(U / L, n * mu1) * Math.pow(L / S, mu2) * (cnd(d1) - cnd(d2)) - 
+              Math.pow(L / (U * S), n * mu3) * (cnd(d3) - cnd(d4));
+              
+      sum2 += Math.pow(U / L, n * (mu1 - 2)) * Math.pow(L / S, mu2) * (cnd(d1 - v * Math.sqrt(T)) - cnd(d2 - v * Math.sqrt(T))) - 
+              Math.pow(L / (U * S), n * (mu3 - 2)) * (cnd(d3 - v * Math.sqrt(T)) - cnd(d4 - v * Math.sqrt(T)));
+    }
+  } else {
+    console.error('Unknown double barrier option type:', typeFlag);
+    return 0;
+  }
+  
+  const outValue = typeFlag === "co" || typeFlag === "po" ? 
+    S * Math.exp((b - r) * T) * sum1 - X * Math.exp(-r * T) * sum2 :
+    X * Math.exp(-r * T) * sum2 - S * Math.exp((b - r) * T) * sum1;
+  
+  // Pour les options "in", on soustrait le prix "out" de l'option vanille
+  if (typeFlag === "co" || typeFlag === "po") {
+    return Math.max(0, outValue);
+  } else if (typeFlag === "ci") {
+    // Prix d'un call vanille - prix d'un call "out"
+    const vanillaCall = S * Math.exp(-rf * T) * cnd(d1(S, X, T, r, rf, v)) - 
+                        X * Math.exp(-r * T) * cnd(d2(S, X, T, r, rf, v));
+    return Math.max(0, vanillaCall - outValue);
+  } else if (typeFlag === "pi") {
+    // Prix d'un put vanille - prix d'un put "out"
+    const vanillaPut = X * Math.exp(-r * T) * cnd(-d2(S, X, T, r, rf, v)) - 
+                       S * Math.exp(-rf * T) * cnd(-d1(S, X, T, r, rf, v));
+    return Math.max(0, vanillaPut - outValue);
+  }
+  
+  return 0;
+}
+
+// Fonctions auxiliaires pour le calcul des d1 et d2 (formule Black-Scholes standard)
+function d1(S: number, X: number, T: number, r: number, rf: number, v: number): number {
+  return (Math.log(S / X) + (r - rf + v * v / 2) * T) / (v * Math.sqrt(T));
+}
+
+function d2(S: number, X: number, T: number, r: number, rf: number, v: number): number {
+  return d1(S, X, T, r, rf, v) - v * Math.sqrt(T);
+}
+
+// Intègre les nouvelles fonctions dans l'API existante
 export const calculateBarrierOptionPrice = (
   type: string,
   spot: number,
@@ -42,52 +275,108 @@ export const calculateBarrierOptionPrice = (
   const isPut = type.includes('put') || (!isCall && !type.includes('forward'));
   const isKO = type.includes('KO');
   const isKI = type.includes('KI');
-  const isReverse = type.includes('reverse');
   const isDouble = upperBarrier !== undefined && lowerBarrier !== undefined;
-  
-  // Validate parameters
-  if (spot <= 0 || strike <= 0 || volatility <= 0 || t <= 0) {
-    console.error("Invalid parameters for barrier option pricing:", { spot, strike, volatility, t });
-    return 0;
-  }
-  
-  if ((isKO || isKI) && upperBarrier === undefined && lowerBarrier === undefined) {
-    console.error("Barrier option specified but no barriers provided:", type);
-    return 0;
-  }
   
   // Vanilla options calculated using closed-form solution
   if (!isKO && !isKI) {
     if (isCall) {
-      return calculateCallPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
+      return callPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
     } else if (isPut) {
-      return calculatePutPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
+      return putPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
     }
   }
   
-  // For barrier options, use the selected pricing model
+  // Use advanced pricing models when available and applicable
   if (currentPricingModel === BARRIER_PRICING_MODELS.CLOSED_FORM) {
-    // Use closed-form solution for barrier options when possible
-    // Note: Currently only supports single barrier options, not double barriers
-    if (!isDouble) {
-      const barrier = upperBarrier || 0;
-      return calculateClosedFormBarrierOptionPrice(
-        isCall, isPut, isKO, isKI, isReverse,
-        spot, strike, barrier, t,
-        domesticRate, foreignRate, volatility, quantity
-      );
-    } else {
-      console.warn("Closed-form solution not available for double barrier options. Falling back to Monte Carlo.");
+    // Handle single barrier options
+    if (!isDouble && upperBarrier) {
+      const typeFlag = getBarrierTypeFlag(isCall, isPut, isKO, isKI, upperBarrier > spot);
+      return standardBarrier(
+        typeFlag,
+        spot,
+        strike,
+        upperBarrier,
+        t,
+        domesticRate,
+        foreignRate,
+        volatility
+      ) * (quantity / 100);
+    }
+    // Handle double barrier options
+    else if (isDouble && upperBarrier && lowerBarrier) {
+      const typeFlag = getDoubleBarrierTypeFlag(isCall, isPut, isKO, isKI);
+      return doubleBarrier(
+        typeFlag,
+        spot,
+        strike,
+        lowerBarrier,
+        upperBarrier,
+        t,
+        domesticRate,
+        foreignRate,
+        volatility
+      ) * (quantity / 100);
     }
   }
   
-  // Use Monte Carlo simulation as a fallback or if specifically selected
+  // Fallback to Monte Carlo for complex cases
     return calculateMonteCarloPrice(
-      isCall, isPut, isKO, isKI, isReverse, isDouble,
+    isCall, isPut, isKO, isKI, false, isDouble,
     spot, strike, upperBarrier, lowerBarrier, t,
     domesticRate, foreignRate, volatility, quantity
   );
 };
+
+// Converts option parameters to the typeFlag used in the analytical formulas
+function getBarrierTypeFlag(
+  isCall: boolean,
+  isPut: boolean,
+  isKO: boolean,
+  isKI: boolean,
+  isUpperBarrier: boolean
+): string {
+  if (isCall) {
+    if (isKI) {
+      return isUpperBarrier ? "cui" : "cdi";
+    } else { // isKO
+      return isUpperBarrier ? "cuo" : "cdo";
+    }
+  } else { // isPut
+    if (isKI) {
+      return isUpperBarrier ? "pui" : "pdi";
+    } else { // isKO
+      return isUpperBarrier ? "puo" : "pdo";
+    }
+  }
+}
+
+// Converts option parameters to the typeFlag used in double barrier formulas
+function getDoubleBarrierTypeFlag(
+  isCall: boolean,
+  isPut: boolean,
+  isKO: boolean,
+  isKI: boolean
+): string {
+  if (isCall) {
+    return isKO ? "co" : "ci";
+  } else { // isPut
+    return isKO ? "po" : "pi";
+  }
+}
+
+// Simplified Black-Scholes for calls
+function callPrice(spot: number, strike: number, maturity: number, r1: number, r2: number, vol: number): number {
+  const d1Value = d1(spot, strike, maturity, r1, r2, vol);
+  const d2Value = d2(spot, strike, maturity, r1, r2, vol);
+  return spot * Math.exp(-r2 * maturity) * cnd(d1Value) - strike * Math.exp(-r1 * maturity) * cnd(d2Value);
+}
+
+// Simplified Black-Scholes for puts
+function putPrice(spot: number, strike: number, maturity: number, r1: number, r2: number, vol: number): number {
+  const d1Value = d1(spot, strike, maturity, r1, r2, vol);
+  const d2Value = d2(spot, strike, maturity, r1, r2, vol);
+  return strike * Math.exp(-r1 * maturity) * cnd(-d2Value) - spot * Math.exp(-r2 * maturity) * cnd(-d1Value);
+}
 
 // Closed-form analytical solution for barrier options (single barrier only)
 const calculateClosedFormBarrierOptionPrice = (
@@ -95,169 +384,39 @@ const calculateClosedFormBarrierOptionPrice = (
   isReverse: boolean, spot: number, strike: number, barrier: number, 
   maturity: number, r1: number, r2: number, vol: number, quantity: number
 ) => {
-  // Standard parameters used in multiple calculations
-  const sigma = vol;
-  const T = maturity;
-  const S = spot;
-  const K = strike;
-  const H = barrier; // The barrier level
-  const r_d = r1; // Domestic interest rate
-  const r_f = r2; // Foreign interest rate
+  // Utiliser la nouvelle implémentation standardBarrier pour les calculs
+  let typeFlag = "";
   
-  // Calculate the drift term in the risk-neutral measure
-  const mu = r_d - r_f - 0.5 * sigma * sigma;
-  
-  // Calculate common terms
-  const sigma_sqrt_T = sigma * Math.sqrt(T);
-  const lambda = (mu + 0.5 * sigma * sigma) / (sigma * sigma);
-  const x = Math.log(S / K) / sigma_sqrt_T + lambda * sigma_sqrt_T;
-  const y = Math.log(H * H / (S * K)) / sigma_sqrt_T + lambda * sigma_sqrt_T;
-  const h = Math.log(H / S) / sigma_sqrt_T + lambda * sigma_sqrt_T;
-  const h_minus = h - 2 * lambda * sigma_sqrt_T;
-
-  // Power terms for the barrier formulas
-  const two_lambda = 2 * lambda;
-  const pow_term = Math.pow(H / S, two_lambda);
-  
-  let price = 0;
-  
-  // Calculate price based on option type
   if (isCall) {
-    if (isKO) {
-      if (!isReverse) {
-        // Up-and-Out Call (standard)
-        if (H <= K) {
-          // Barrier below or at strike: standard call price
-          price = calculateCallPrice(S, K, T, r_d, r_f, sigma);
-        } else {
-          // Barrier above strike: up-and-out call formula
-          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
-          const adjustment = S * Math.exp(-r_f * T) * normCDF(x) - 
-                            K * Math.exp(-r_d * T) * normCDF(x - sigma_sqrt_T);
-          
-          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(y) - 
-                              K * Math.exp(-r_d * T) * pow_term * normCDF(y - sigma_sqrt_T);
-          
-          price = vanilla_call - adjustment + barrier_term;
-        }
-      } else {
-        // Down-and-Out Call (reverse)
-        if (H >= K) {
-          // Barrier above or at strike: standard call price
-          price = calculateCallPrice(S, K, T, r_d, r_f, sigma);
-        } else {
-          // Barrier below strike: down-and-out call formula
-          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
-          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(-h) - 
-                              K * Math.exp(-r_d * T) * pow_term * normCDF(-h + sigma_sqrt_T);
-          
-          price = vanilla_call - barrier_term;
-        }
-      }
-    } else if (isKI) {
-      if (!isReverse) {
-        // Up-and-In Call (standard)
-        if (H <= K) {
-          // Barrier below or at strike: zero (never activated)
-          price = 0;
-        } else {
-          // Barrier above strike: up-and-in call formula
-          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
-          const adjustment = S * Math.exp(-r_f * T) * normCDF(x) - 
-                            K * Math.exp(-r_d * T) * normCDF(x - sigma_sqrt_T);
-          
-          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(y) - 
-                              K * Math.exp(-r_d * T) * pow_term * normCDF(y - sigma_sqrt_T);
-          
-          price = vanilla_call - (vanilla_call - adjustment + barrier_term);
-        }
-      } else {
-        // Down-and-In Call (reverse)
-        if (H >= K) {
-          // Barrier above or at strike: zero (never activated)
-          price = 0;
-        } else {
-          // Barrier below strike: down-and-in call formula
-          const vanilla_call = calculateCallPrice(S, K, T, r_d, r_f, sigma);
-          const barrier_term = S * Math.exp(-r_f * T) * pow_term * normCDF(-h) - 
-                              K * Math.exp(-r_d * T) * pow_term * normCDF(-h + sigma_sqrt_T);
-          
-          price = barrier_term;
-        }
-      }
+    if (isKI) {
+      typeFlag = isReverse ? "cdi" : "cui"; // down/up and in
+    } else { // isKO
+      typeFlag = isReverse ? "cdo" : "cuo"; // down/up and out
     }
-  } else if (isPut) {
-    if (isKO) {
-      if (!isReverse) {
-        // Down-and-Out Put (standard)
-        if (H >= K) {
-          // Barrier above or at strike: standard put price
-          price = calculatePutPrice(S, K, T, r_d, r_f, sigma);
-        } else {
-          // Barrier below strike: down-and-out put formula
-          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
-          const adjustment = K * Math.exp(-r_d * T) * normCDF(-x + sigma_sqrt_T) - 
-                            S * Math.exp(-r_f * T) * normCDF(-x);
-          
-          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(-y + sigma_sqrt_T) - 
-                              S * Math.exp(-r_f * T) * pow_term * normCDF(-y);
-          
-          price = vanilla_put - adjustment + barrier_term;
-        }
-      } else {
-        // Up-and-Out Put (reverse)
-        if (H <= K) {
-          // Barrier below or at strike: standard put price
-          price = calculatePutPrice(S, K, T, r_d, r_f, sigma);
-        } else {
-          // Barrier above strike: up-and-out put formula
-          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
-          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(h - sigma_sqrt_T) - 
-                              S * Math.exp(-r_f * T) * pow_term * normCDF(h);
-          
-          price = vanilla_put - barrier_term;
-        }
-      }
-    } else if (isKI) {
-      if (!isReverse) {
-        // Down-and-In Put (standard)
-        if (H >= K) {
-          // Barrier above or at strike: zero (never activated)
-          price = 0;
-        } else {
-          // Barrier below strike: down-and-in put formula
-          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
-          const adjustment = K * Math.exp(-r_d * T) * normCDF(-x + sigma_sqrt_T) - 
-                            S * Math.exp(-r_f * T) * normCDF(-x);
-          
-          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(-y + sigma_sqrt_T) - 
-                              S * Math.exp(-r_f * T) * pow_term * normCDF(-y);
-          
-          price = vanilla_put - (vanilla_put - adjustment + barrier_term);
-        }
-      } else {
-        // Up-and-In Put (reverse)
-        if (H <= K) {
-          // Barrier below or at strike: zero (never activated)
-          price = 0;
-        } else {
-          // Barrier above strike: up-and-in put formula
-          const vanilla_put = calculatePutPrice(S, K, T, r_d, r_f, sigma);
-          const barrier_term = K * Math.exp(-r_d * T) * pow_term * normCDF(h - sigma_sqrt_T) - 
-                              S * Math.exp(-r_f * T) * pow_term * normCDF(h);
-          
-          price = barrier_term;
-        }
-      }
+  } else { // isPut
+    if (isKI) {
+      typeFlag = isReverse ? "pui" : "pdi"; // up/down and in
+    } else { // isKO
+      typeFlag = isReverse ? "puo" : "pdo"; // up/down and out
     }
   }
   
-  // Adjust for quantity
-  return Math.max(0, price) * (quantity / 100);
+  return standardBarrier(
+    typeFlag,
+    spot,
+    strike,
+    barrier,
+    maturity,
+    r1,
+    r2,
+    vol,
+    0 // Pas de rebate (K=0)
+  ) * (quantity / 100);
 };
 
 // Monte Carlo simulation for barrier options
-const calculateMonteCarloPrice = (
+// Export this function to be used from garmanKohlhagen.ts for vanilla options
+export const calculateMonteCarloPrice = (
   isCall: boolean, isPut: boolean, isKO: boolean, isKI: boolean, 
   isReverse: boolean, isDouble: boolean,
   spot: number, strike: number, upperBarrier: number | undefined, 

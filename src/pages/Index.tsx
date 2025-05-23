@@ -23,6 +23,8 @@ import RiskMatrixGenerator from '@/components/hedgeTabs/RiskMatrixGenerator';
 
 // Import necessary components and functions
 import { calculateBarrierOptionPrice, calculateCustomStrategyPayoff } from '@/utils/barrierOptionCalculations';
+import { calculateOptionPrice_GarmanKohlhagen } from '@/utils/calculatePrices';
+import { cnd } from '@/utils/garmanKohlhagen';
 import PayoffChart from '@/components/PayoffChart';
 import StrategyInfo from '@/components/StrategyInfo';
 import CustomStrategyBuilder, { OptionComponent as CustomOptionComponent } from '@/components/CustomStrategyBuilder';
@@ -166,7 +168,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     base: {
         name: "Base Case", 
         description: "Normal market conditions without particular shock",
-        volatility: 0.10, 
+        volatility: 0.08, // CORRECTED: 8% instead of 10% for normal FX conditions
         rateDifferentialShock: 0, 
         rateShock: 0, 
         forwardPointsShock: 0,
@@ -174,8 +176,8 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     },
     highVol: {
         name: "High Volatility", 
-        description: "Increased volatility (+5%) - periods of uncertainty, elections, crises",
-        volatility: 0.15, 
+        description: "Increased volatility (+4%) - periods of uncertainty, elections, crises",
+        volatility: 0.12, // CORRECTED: 12% instead of 15% for high volatility FX
         rateDifferentialShock: 0, 
         rateShock: 0, 
         forwardPointsShock: 0,
@@ -184,7 +186,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     extremeVol: {
         name: "Extreme Volatility", 
         description: "Unstable market conditions - Covid-19 type or financial crisis",
-        volatility: 0.25, 
+        volatility: 0.18, // CORRECTED: 18% instead of 25% for extreme FX volatility
         rateDifferentialShock: 0.0025, 
         rateShock: 0, 
         forwardPointsShock: 0,
@@ -193,7 +195,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     rateDepreciation: {
         name: "Foreign Currency Depreciation (-5%)", 
         description: "Foreign currency weakening - economic deterioration",
-        volatility: 0.12, 
+        volatility: 0.10, // CORRECTED: 10% instead of 12% for moderate stress
         rateShock: -0.05, 
         rateDifferentialShock: 0,
         forwardPointsShock: 0,
@@ -202,7 +204,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     severeDepreciation: {
         name: "Severe Depreciation (-15%)", 
         description: "Currency crisis or central bank intervention",
-        volatility: 0.18, 
+        volatility: 0.15, // CORRECTED: 15% instead of 18% for severe stress
         rateShock: -0.15, 
         rateDifferentialShock: 0.005,
         forwardPointsShock: 0,
@@ -211,7 +213,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     rateAppreciation: {
         name: "Foreign Currency Appreciation (+5%)", 
         description: "Foreign currency strengthening - economic improvement",
-        volatility: 0.12, 
+        volatility: 0.10, // CORRECTED: 10% instead of 12% for moderate stress
         rateShock: 0.05, 
         rateDifferentialShock: 0,
         forwardPointsShock: 0,
@@ -220,7 +222,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     severeAppreciation: {
         name: "Severe Appreciation (+15%)", 
         description: "Strong demand for foreign currency - safe haven",
-        volatility: 0.18, 
+        volatility: 0.15, // CORRECTED: 15% instead of 18% for severe stress
         rateShock: 0.15, 
         rateDifferentialShock: -0.005,
         forwardPointsShock: 0,
@@ -229,7 +231,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     diffWidens: {
         name: "Widened Rate Differential (+100 bps)", 
         description: "Increased interest rate differential (r_d - r_f)",
-        volatility: 0.11, 
+        volatility: 0.09, // CORRECTED: 9% instead of 11% for rate differential stress
         rateShock: 0.01, 
         rateDifferentialShock: 0.01,
         forwardPointsShock: 0.01,
@@ -238,7 +240,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     diffNarrows: {
         name: "Narrowed Rate Differential (-100 bps)", 
         description: "Decreased interest rate differential (r_d - r_f)",
-        volatility: 0.11, 
+        volatility: 0.09, // CORRECTED: 9% instead of 11% for rate differential stress
         rateShock: -0.01, 
         rateDifferentialShock: -0.01,
         forwardPointsShock: -0.01,
@@ -247,7 +249,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     fwdPointsShock: {
         name: "Forward Points Shock", 
         description: "Forward market distortion without spot rate effect",
-        volatility: 0.10, 
+        volatility: 0.08, // CORRECTED: Keep at base level since no spot volatility expected
         rateShock: 0, 
         rateDifferentialShock: 0,
         forwardPointsShock: 0.02,
@@ -256,7 +258,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     recession: {
         name: "Recession Scenario", 
         description: "Combination of high volatility and rate decreases",
-        volatility: 0.20, 
+        volatility: 0.16, // CORRECTED: 16% instead of 20% for recession (still high but realistic)
         rateShock: -0.08, 
         rateDifferentialShock: -0.0075,
         forwardPointsShock: -0.005,
@@ -265,7 +267,7 @@ const DEFAULT_FOREX_SCENARIOS: Record<string, ForexStressTestScenario> = {
     custom: {
         name: "Custom Scenario", 
         description: "Define your own stress test parameters",
-        volatility: 0.10, 
+        volatility: 0.08, // CORRECTED: Start with realistic base volatility
         rateShock: 0, 
         rateDifferentialShock: 0,
         forwardPointsShock: 0,
@@ -277,7 +279,7 @@ const Index = () => {
   // --- State Updates ---
   const [activeTab, setActiveTab] = useState<string>("strategy");
   const [selectedPair, setSelectedPair] = useState<string>("EUR/USD");
-  const [selectedStrategy, setSelectedStrategy] = useState<string>('forward');
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('custom');
   const [includePremium, setIncludePremium] = useState(true);
   const [showNotional, setShowNotional] = useState(false);
   const [customStrategyComponents, setCustomStrategyComponents] = useState<CustomOptionComponent[]>([]);
@@ -300,13 +302,13 @@ const Index = () => {
       baseNotional: 1000000,
       quoteNotional: (1000000 * 1.10),
       selectedPair: "EUR/USD",
-      selectedStrategy: 'forward',
+      selectedStrategy: 'custom',
     };
   });
 
   const [realRateParams, setRealRateParams] = useState<RealRateParams>({
     useSimulation: false,
-    volatility: 15.0, // Increased default from lower value
+    volatility: 8.0, // CORRECTED: Realistic FX volatility (8% instead of 15%) - Major currency pairs typically trade at 6-12% annual volatility
     numSimulations: 1000, // Increased default from lower value
     additionalDrift: 0, // Tendance annuelle supplémentaire en %
     ignoreDriftFromRates: false, // Ignorer le drift lié aux taux d'intérêt
@@ -346,7 +348,7 @@ const Index = () => {
     const savedState = localStorage.getItem('forexCalculatorState');
     const defaultCustom: ForexStressTestScenario = {
         name: "Custom Case", description: "User-defined scenario",
-        volatility: 0.10, rateShock: 0, isCustom: true
+        volatility: 0.08, rateShock: 0, isCustom: true // CORRECTED: 8% instead of 10% volatility
     };
     if (savedState) {
         const saved = JSON.parse(savedState).customScenario;
@@ -493,25 +495,6 @@ const Index = () => {
   }, [results]);
 
   // --- Placeholder Functions for Forex Calculations ---
-
-  const calculateOptionPrice_GarmanKohlhagen = (
-    type: 'call' | 'put',
-    S: number, K: number, r_d: number, r_f: number, t: number, sigma: number
-  ): number => {
-    const d1 = (Math.log(S/K) + (r_d - r_f + sigma**2/2)*t) / (sigma*Math.sqrt(t) || 0.00001);
-    const d2 = d1 - sigma*Math.sqrt(t);
-
-    const Nd1 = (1 + erf(d1/Math.sqrt(2)))/2;
-    const Nd2 = (1 + erf(d2/Math.sqrt(2)))/2;
-
-    if (type === 'call') {
-      return S*Math.exp(-r_f*t)*Nd1 - K*Math.exp(-r_d*t)*Nd2;
-    } else {
-      const N_minus_d1 = 1 - Nd1;
-      const N_minus_d2 = 1 - Nd2;
-      return K*Math.exp(-r_d*t)*N_minus_d2 - S*Math.exp(-r_f*t)*N_minus_d1;
-    }
-  };
 
   const generatePricePathsForPeriod_Forex = useCallback((
     months: Date[], startDate: Date, spotRate: number, r_d: number, r_f: number,
@@ -759,17 +742,9 @@ const Index = () => {
   };
 
   const erf = (x: number): number => {
-    const a1 =  0.254829592;
-    const a2 = -0.284496736;
-    const a3 =  1.421413741;
-    const a4 = -1.453152027;
-    const a5 =  1.061405429;
-    const p  =  0.3275911;
-    const sign = (x >= 0) ? 1 : -1;
-    x = Math.abs(x);
-    const t = 1.0 / (1.0 + p * x);
-    const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-    return sign * y;
+    // Relation entre erf et la fonction cumulative normale standard (cnd) :
+    // erf(x) = 2*cnd(x*sqrt(2)) - 1
+    return 2 * cnd(x * Math.sqrt(2)) - 1;
   };
 
   const handleParamChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -998,7 +973,8 @@ const Index = () => {
     }
 
     months.forEach((date, index) => {
-        const t = (date.getTime() - currentStartDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000) + (1/365.25); // Time to maturity in years
+        // Time to maturity in years - calcul correct sans biais
+        const t = Math.max(1/365.25, (date.getTime() - currentStartDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000)); 
         const realRate = realRates[index];
         const monthlyVolume = params.totalVolume / params.monthsToHedge;
         
@@ -1016,6 +992,7 @@ const Index = () => {
           currentForeignRate = r_f - (currentRateDiffShock / 2);
         }
         
+        // Forward rate calculation: F = S * exp((r_d - r_f) * T)
         const forwardRate = S * Math.exp((currentDomesticRate - currentForeignRate) * t);
         
         // Appliquer le choc direct aux points forwards si spécifié, avec effet progressif
@@ -1182,13 +1159,23 @@ const Index = () => {
                      break;
                  case 'collarPut': // Long Put (strikeLower), Short Call (strikeUpper)
                  case 'collarCall': // Assuming strikes are correctly set for zero cost
-                      totalPayoffPerUnit = Math.max(0, strikeLower - realRate) - Math.max(0, realRate - strikeUpper);
+                      // Collar payoff: protection en dessous de put strike, limitation au-dessus de call strike
+                      if (realRate <= strikeLower) {
+                          // Protection du put activée
+                          totalPayoffPerUnit = strikeLower - realRate;
+                      } else if (realRate >= strikeUpper) {
+                          // Limitation du call vendu activée
+                          totalPayoffPerUnit = strikeUpper - realRate; // Négatif car obligation de vendre au strike
+                      } else {
+                          // Entre les deux strikes, pas de payoff
+                          totalPayoffPerUnit = 0;
+                      }
                       break;
                  case 'callKO': // Payoff = max(0, realRate - strikeUpper) if realRate < barrierUpper, else 0
                      totalPayoffPerUnit = (realRate < barrierUpper) ? Math.max(0, realRate - strikeUpper) : 0;
                      break;
-                 case 'putKI': // Payoff = max(0, strikeLower - realRate) if realRate < barrierLower (assuming lower barrier for KI Put), else 0
-                     totalPayoffPerUnit = (realRate < barrierLower) ? Math.max(0, strikeLower - realRate) : 0; 
+                 case 'putKI': // Put Knock-In: s'active si le taux touche/dépasse la barrière (typiquement au-dessus)
+                     totalPayoffPerUnit = (realRate >= barrierUpper) ? Math.max(0, strikeLower - realRate) : 0; 
                      break;
                  case 'strangle': // Long Put (strikeLower), Long Call (strikeUpper)
                      totalPayoffPerUnit = Math.max(0, strikeLower - realRate) + Math.max(0, realRate - strikeUpper);
@@ -1201,7 +1188,7 @@ const Index = () => {
                       break;
                  case 'callPutKI_KO': // Call KO (Upper Barrier) + Put KI (Lower Barrier)
                       const callKOPayoff = (realRate < barrierUpper) ? Math.max(0, realRate - strikeUpper) : 0;
-                      const putKIPayoff = (realRate < barrierLower) ? Math.max(0, strikeLower - realRate) : 0;
+                      const putKIPayoff = (realRate <= barrierLower) ? Math.max(0, strikeLower - realRate) : 0;
                       totalPayoffPerUnit = callKOPayoff + putKIPayoff;
                       break;
                  default:
@@ -1215,20 +1202,15 @@ const Index = () => {
         let premiumPaid = monthlyVolume * totalPremiumPerUnit;
         let payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
         
-        // Recalculer correctement pour les options vanille standard
-        if (selectedStrategy === 'call') {
-            // Pour un call, le payoff est positif si le taux réel > strike
-            totalPayoffPerUnit = Math.max(0, realRate - params.strikeUpper) * (params.optionQuantity || 100) / 100;
-            payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
-        } else if (selectedStrategy === 'put') {
-            // Pour un put, le payoff est positif si le taux réel < strike
-            totalPayoffPerUnit = Math.max(0, params.strikeLower - realRate) * (params.optionQuantity || 100) / 100;
-            payoffFromHedge = monthlyVolume * totalPayoffPerUnit;
-        }
+        // Note: payoffs sont déjà calculés correctement dans les sections précédentes
         
         const hedgedRevenue = unhedgedRevenue + payoffFromHedge - premiumPaid;
         const pnlVsUnhedged = payoffFromHedge - premiumPaid;
-        const effectiveRate = monthlyVolume === 0 ? realRate : hedgedRevenue / monthlyVolume;
+        // Effective rate: le taux effectif payé après hedging
+        // Si l'entreprise achète avec volume monthlyVolume, quel est le taux effectif ?
+        // Effective Rate = (coût total) / volume = (premiumPaid - payoffFromHedge + monthlyVolume * realRate) / monthlyVolume
+        // Simplifie à: realRate + (premiumPaid - payoffFromHedge) / monthlyVolume
+        const effectiveRate = monthlyVolume === 0 ? realRate : realRate + (premiumPaid - payoffFromHedge) / monthlyVolume;
 
         resultsArray.push({
             date: date.toISOString().split('T')[0],
@@ -1661,16 +1643,16 @@ const Index = () => {
         baseNotional: 1000000,
         quoteNotional: (1000000 * 1.10),
         selectedPair: "EUR/USD",
-        selectedStrategy: 'forward',
+        selectedStrategy: 'custom',
     });
     setInitialSpotRate(1.10);
     setResults([]);
     setPayoffData([]);
     setSelectedPair("EUR/USD");
-    setSelectedStrategy('forward');
+    setSelectedStrategy('custom');
     setRealRateParams({
         useSimulation: false,
-        volatility: 15.0, // Increased default from lower value
+        volatility: 8.0, // CORRECTED: Realistic FX volatility (8% instead of 15%) - Major currency pairs typically trade at 6-12% annual volatility
         numSimulations: 1000, // Increased default from lower value
         additionalDrift: 0, // Tendance annuelle supplémentaire en %
         ignoreDriftFromRates: false, // Ignorer le drift lié aux taux d'intérêt
@@ -2291,7 +2273,14 @@ const Index = () => {
                                      onChange={handleRealRateParamChange}
                                      step="0.1"
                                  />
-          </div>
+                                 <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
+                                     <p className="text-xs text-yellow-800">
+                                         <strong>⚠️ Important:</strong> Higher volatility = more expensive options. 
+                                         Major FX pairs typically trade at 6-12% volatility. 
+                                         If P&L is negative despite favorable payoffs, consider reducing volatility to more realistic levels.
+                                     </p>
+                                 </div>
+                             </div>
                               <div>
                                   <Label htmlFor="numSimulations">Number of Simulations</Label>
                                   <Input
