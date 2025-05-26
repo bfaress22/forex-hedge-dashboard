@@ -16,6 +16,8 @@ interface CustomStrategyBuilderProps {
   foreignRate?: number;
   notional?: number;
   notionalQuote?: number;
+  // Add initial options from parent
+  initialOptions?: OptionComponent[];
 }
 
 const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({ 
@@ -27,17 +29,10 @@ const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({
   domesticRate = 2,
   foreignRate = 3,
   notional = 1000000,
-  notionalQuote = 1000000 * spot
+  notionalQuote = 1000000 * spot,
+  initialOptions = []
 }) => {
-  const [options, setOptions] = useState<OptionComponent[]>([
-    {
-      type: "call",
-      strike: 105,
-      strikeType: "percent",
-      volatility: 20,
-      quantity: 100,
-    },
-  ]);
+  const [options, setOptions] = useState<OptionComponent[]>(initialOptions);
   
   // Barrier option pricing model
   const [barrierPricingModel, setBarrierPricingModelState] = useState(BARRIER_PRICING_MODELS.MONTE_CARLO);
@@ -98,6 +93,24 @@ const CustomStrategyBuilder: React.FC<CustomStrategyBuilderProps> = ({
       vanillaPricingModel: vanillaModel
     };
   };
+
+  // Synchronize internal state with parent state
+  useEffect(() => {
+    if (initialOptions.length > 0) {
+      setOptions(initialOptions);
+    } else if (options.length === 0) {
+      // Initialize with default option only if no initial options and current state is empty
+      setOptions([
+        {
+          type: "call",
+          strike: 105,
+          strikeType: "percent",
+          volatility: 20,
+          quantity: 100,
+        },
+      ]);
+    }
+  }, [initialOptions]);
 
   useEffect(() => {
     // Set the pricing model globally when component mounts or when parameters change

@@ -90,68 +90,90 @@ const DetailedResultsTable = ({ results, params, selectedPair }: {
     // Calculate forward price for this maturity
     const forward = calculateForward(params.spot, maturity.value, params.r1, params.r2);
     
-    // Calculate real price (spot price is the current price)
-    const realPrice = params.spot;
+    // Calculate real price (simulated rate - in real scenario this would be market rate)
+    const realPrice = forward + (Math.random() - 0.5) * 0.001; // Small random variation
 
     // For simplicity, we'll use the same volatility across maturities
-    // In a real implementation, you might have a term structure of volatility
     const vol = params.vol;
 
-    // Calculate option price and strategy values
-    let optionPrice, strategyPrice, strategyPayoff;
+    // Calculate option prices and payoffs more realistically
+    let premiumPerUnit = 0;
+    let payoffPerUnit = 0;
+    let strategyPrice = 0;
     
     if (results.callPrice !== undefined && results.putPrice !== undefined) {
-      // For strategies with calls and puts
+      // For strategies with calls and puts (collar, strangle)
       const callPrice = calculateCall(params.spot, results.callStrike || params.strikeUpper, maturity.value, params.r1, params.r2, vol);
       const putPrice = calculatePut(params.spot, results.putStrike || params.strikeLower, maturity.value, params.r1, params.r2, vol);
-      optionPrice = callPrice + putPrice;
-      strategyPrice = optionPrice;
-      strategyPayoff = optionPrice; // This is simplified - actual payoff depends on strategy
+      
+      premiumPerUnit = putPrice - callPrice; // Net premium for collar (usually close to zero)
+      strategyPrice = Math.abs(callPrice + putPrice);
+      
+      // Calculate actual payoff based on where the rate ends up
+      if (realPrice <= (results.putStrike || params.strikeLower)) {
+        payoffPerUnit = (results.putStrike || params.strikeLower) - realPrice;
+      } else if (realPrice >= (results.callStrike || params.strikeUpper)) {
+        payoffPerUnit = realPrice - (results.callStrike || params.strikeUpper);
+      } else {
+        payoffPerUnit = 0; // Between strikes
+      }
     } else if (results.callPrice !== undefined) {
       // Call only strategies
-      optionPrice = calculateCall(params.spot, params.strikeUpper, maturity.value, params.r1, params.r2, vol);
-      strategyPrice = optionPrice;
-      strategyPayoff = optionPrice;
+      const callPrice = calculateCall(params.spot, params.strikeUpper, maturity.value, params.r1, params.r2, vol);
+      premiumPerUnit = -callPrice; // Negative because we pay premium
+      strategyPrice = callPrice;
+      
+      // Call payoff
+      payoffPerUnit = Math.max(0, realPrice - params.strikeUpper);
     } else if (results.putPrice !== undefined) {
       // Put only strategies
-      optionPrice = calculatePut(params.spot, params.strikeLower, maturity.value, params.r1, params.r2, vol);
-      strategyPrice = optionPrice;
-      strategyPayoff = optionPrice;
-    } else {
-      // Default fallback
-      optionPrice = 0;
-      strategyPrice = 0;
-      strategyPayoff = 0;
+      const putPrice = calculatePut(params.spot, params.strikeLower, maturity.value, params.r1, params.r2, vol);
+      premiumPerUnit = -putPrice; // Negative because we pay premium
+      strategyPrice = putPrice;
+      
+      // Put payoff
+      payoffPerUnit = Math.max(0, params.strikeLower - realPrice);
     }
 
-    // Calculate hedged and unhedged costs
-    // These are simplified approximations
+    // Calculate volumes and costs more realistically
+    const monthlyVolume = params.notional / params.maturity; // Split notional across months
     const volume = params.optionQuantity ? params.optionQuantity / 100 : 1;
-    const hedgedCost = strategyPrice * params.notional * volume;
-    const unhedgedCost = hedgedCost * 0.85; // Simplified for demo
     
-    // Calculate Delta P&L (simplified)
-    const deltaPL = strategyPrice * params.notional * 0.1; // Simplified for demo
+    const premiumPaid = premiumPerUnit * monthlyVolume * volume;
+    const hedgePayoff = payoffPerUnit * monthlyVolume * volume;
+    
+    // Calculate revenues
+    const unhedgedRevenue = realPrice * monthlyVolume;
+    const hedgedRevenue = unhedgedRevenue + hedgePayoff;
+    const pnlVsUnhedged = hedgedRevenue - unhedgedRevenue;
+    
+    // Calculate effective rate
+    const effectiveRate = hedgedRevenue / monthlyVolume;
 
     return {
       maturity: maturity.date,
       timeToMaturity: maturity.displayTime,
-      forwardPrice: forward.toFixed(4),
-      realPrice: realPrice.toFixed(4),
-      optionPrice: formatNumber(optionPrice),
-      strategyPrice: formatNumber(strategyPrice),
-      strategyPayoff: formatNumber(strategyPayoff),
-      volume: `${(volume * 100)}%`,
-      hedgedCost: formatCurrencyValue(hedgedCost),
-      unhedgedCost: formatCurrencyValue(unhedgedCost),
-      deltaPL: formatCurrencyValue(deltaPL),
+      forwardRate: forward.toFixed(4),
+      simulatedRate: realPrice.toFixed(4),
+      premiumPerUnit: formatNumber(premiumPerUnit),
+      payoffPerUnit: formatNumber(payoffPerUnit),
+      monthlyVolume: monthlyVolume.toFixed(0),
+      premiumPaid: formatNumber(premiumPaid),
+      hedgePayoff: formatNumber(hedgePayoff),
+      unhedgedRevenue: formatNumber(unhedgedRevenue),
+      hedgedRevenue: formatNumber(hedgedRevenue),
+      pnlVsUnhedged: formatNumber(pnlVsUnhedged),
+      effectiveRate: formatNumber(effectiveRate),
       // Raw values for CSV export
-      rawOptionPrice: optionPrice,
-      rawStrategyPrice: strategyPrice,
-      rawStrategyPayoff: strategyPayoff,
-      rawHedgedCost: hedgedCost,
-      rawUnhedgedCost: unhedgedCost,
-      rawDeltaPL: deltaPL
+      rawPremiumPerUnit: premiumPerUnit,
+      rawPayoffPerUnit: payoffPerUnit,
+      rawMonthlyVolume: monthlyVolume,
+      rawPremiumPaid: premiumPaid,
+      rawHedgePayoff: hedgePayoff,
+      rawUnhedgedRevenue: unhedgedRevenue,
+      rawHedgedRevenue: hedgedRevenue,
+      rawPnlVsUnhedged: pnlVsUnhedged,
+      rawEffectiveRate: effectiveRate
     };
   });
 
@@ -162,17 +184,19 @@ const DetailedResultsTable = ({ results, params, selectedPair }: {
   const exportToCsv = () => {
     // Create CSV header
     const csvHeader = [
-      'Maturity',
-      'Time to Maturity',
-      'Forward Price',
-      'Real Price',
-      'Option Price',
-      'Strategy Price',
-      'Strategy Payoff',
-      'Volume',
-      'Hedged Cost',
-      'Unhedged Cost',
-      'Delta P&L'
+      'Date',
+      'Time (yr)',
+      'Forward Rate',
+      'Simulated Rate',
+      'Premium/Unit',
+      'Payoff/Unit',
+      'Monthly Vol',
+      'Premium Paid',
+      'Hedge Payoff',
+      'Unhedged Rev',
+      'Hedged Rev',
+      'P&L vs Unhedged',
+      'Effective Rate'
     ].join(',');
     
     // Create CSV rows
@@ -180,15 +204,17 @@ const DetailedResultsTable = ({ results, params, selectedPair }: {
       return [
         result.maturity,
         result.timeToMaturity,
-        result.forwardPrice,
-        result.realPrice,
-        plainNumber(result.rawOptionPrice),
-        plainNumber(result.rawStrategyPrice),
-        plainNumber(result.rawStrategyPayoff),
-        (parseInt(result.volume) / 100).toString(),
-        plainNumber(result.rawHedgedCost),
-        plainNumber(result.rawUnhedgedCost),
-        plainNumber(result.rawDeltaPL)
+        result.forwardRate,
+        result.simulatedRate,
+        plainNumber(result.rawPremiumPerUnit),
+        plainNumber(result.rawPayoffPerUnit),
+        plainNumber(result.rawMonthlyVolume),
+        plainNumber(result.rawPremiumPaid),
+        plainNumber(result.rawHedgePayoff),
+        plainNumber(result.rawUnhedgedRevenue),
+        plainNumber(result.rawHedgedRevenue),
+        plainNumber(result.rawPnlVsUnhedged),
+        plainNumber(result.rawEffectiveRate)
       ].join(',');
     });
     
@@ -229,17 +255,19 @@ const DetailedResultsTable = ({ results, params, selectedPair }: {
         <table className="min-w-full divide-y divide-muted-foreground/20">
           <thead className="bg-muted/30">
             <tr className="text-left">
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Maturity</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Time to Maturity</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Forward Price</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Real Price</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Option Price</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Strategy Price</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Strategy Payoff</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Volume</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Hedged Cost</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Unhedged Cost</th>
-              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Delta P&L</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Date</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Time (yr)</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Forward Rate</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Simulated Rate</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Premium/Unit</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Payoff/Unit</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Monthly Vol</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Premium Paid</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Hedge Payoff</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Unhedged Rev</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Hedged Rev</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">P&L vs Unhedged</th>
+              <th className="px-4 py-3 text-xs font-semibold text-foreground/70">Effective Rate</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-muted-foreground/10">
@@ -253,15 +281,17 @@ const DetailedResultsTable = ({ results, params, selectedPair }: {
               >
                 <td className="px-4 py-3 text-sm font-medium">{result.maturity}</td>
                 <td className="px-4 py-3 text-sm">{result.timeToMaturity}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.forwardPrice}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.realPrice}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.optionPrice}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.strategyPrice}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.strategyPayoff}</td>
-                <td className="px-4 py-3 text-sm">{result.volume}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.hedgedCost}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.unhedgedCost}</td>
-                <td className="px-4 py-3 text-sm font-mono">{result.deltaPL}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.forwardRate}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.simulatedRate}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.premiumPerUnit}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.payoffPerUnit}</td>
+                <td className="px-4 py-3 text-sm">{result.monthlyVolume}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.premiumPaid}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.hedgePayoff}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.unhedgedRevenue}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.hedgedRevenue}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.pnlVsUnhedged}</td>
+                <td className="px-4 py-3 text-sm font-mono">{result.effectiveRate}</td>
               </tr>
             ))}
           </tbody>

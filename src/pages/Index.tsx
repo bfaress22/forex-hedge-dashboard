@@ -23,8 +23,7 @@ import RiskMatrixGenerator from '@/components/hedgeTabs/RiskMatrixGenerator';
 
 // Import necessary components and functions
 import { calculateBarrierOptionPrice, calculateCustomStrategyPayoff } from '@/utils/barrierOptionCalculations';
-import { calculateOptionPrice_GarmanKohlhagen } from '@/utils/calculatePrices';
-import { cnd } from '@/utils/garmanKohlhagen';
+import { calculateCall, calculatePut, cnd } from '@/utils/garmanKohlhagen';
 import PayoffChart from '@/components/PayoffChart';
 import StrategyInfo from '@/components/StrategyInfo';
 import CustomStrategyBuilder, { OptionComponent as CustomOptionComponent } from '@/components/CustomStrategyBuilder';
@@ -394,6 +393,7 @@ const Index = () => {
   // Add state for original parameters during stress testing
   const [originalParams, setOriginalParams] = useState<ForexParams | null>(null);
   const [originalRealRateParams, setOriginalRealRateParams] = useState<RealRateParams | null>(null);
+  const [originalCustomStrategyComponents, setOriginalCustomStrategyComponents] = useState<CustomOptionComponent[] | null>(null);
 
   const [activeScenarioKey, setActiveScenarioKey] = useState<string | null>(null);
   const [useImpliedVolatility, setUseImpliedVolatility] = useState<boolean>(false);
@@ -743,7 +743,7 @@ const Index = () => {
 
   const erf = (x: number): number => {
     // Relation entre erf et la fonction cumulative normale standard (cnd) :
-    // erf(x) = 2*cnd(x*sqrt(2)) - 1
+    // erf(x) = 2*cnd(x * Math.sqrt(2)) - 1
     return 2 * cnd(x * Math.sqrt(2)) - 1;
   };
 
@@ -825,6 +825,18 @@ const Index = () => {
 
   const handleCustomStrategyChange = (options: CustomOptionComponent[]) => {
     setCustomStrategyComponents(options);
+  };
+
+  // Helper function to replace calculateOptionPrice
+  const calculateOptionPrice = (type: string, S: number, K: number, r_d: number, r_f: number, T: number, sigma: number): number => {
+    if (type.toLowerCase() === "c" || type.toLowerCase().includes("call")) {
+      return calculateCall(S, K, T, r_d, r_f, sigma);
+    } else if (type.toLowerCase() === "p" || type.toLowerCase().includes("put")) {
+      return calculatePut(S, K, T, r_d, r_f, sigma);
+    } else {
+      console.error('Unknown option type:', type);
+      return 0;
+    }
   };
 
   const calculateResults = () => {
@@ -1031,7 +1043,7 @@ const Index = () => {
                 // Premium Calculation - Use appropriate model based on option type
                 if (comp.type === 'call' || comp.type === 'put') {
                     // Use Garman-Kohlhagen (Black-Scholes for FX) for vanilla options
-                    premium = calculateOptionPrice_GarmanKohlhagen(comp.type, S, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor);
+                    premium = calculateOptionPrice(comp.type, S, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor);
                 } else if (comp.type.includes('KO') || comp.type.includes('KI')) {
                     // Use barrier option pricing model for barrier options
                     const upperBarrier = comp.upperBarrierType === 'percent' 
@@ -1061,7 +1073,21 @@ const Index = () => {
 
                 // Payoff Calculation (using helper)
                 const basePayoff = comp.type.includes('call') ? Math.max(0, realRate - strikeRate) : Math.max(0, strikeRate - realRate);
-                payoff = calculateBarrierPayoff(comp, realRate, basePayoff, initialS) * Math.abs(quantityFactor);
+                const calculatedPayoff = calculateBarrierPayoff(comp, realRate, basePayoff, initialS);
+                payoff = calculatedPayoff * Math.abs(quantityFactor);
+                
+                // Debug log for vanilla options
+                if (comp.type === 'call' || comp.type === 'put') {
+                    console.log(`Vanilla ${comp.type} payoff debug:`, {
+                        type: comp.type,
+                        realRate: realRate.toFixed(4),
+                        strikeRate: strikeRate.toFixed(4),
+                        basePayoff: basePayoff.toFixed(5),
+                        calculatedPayoff: calculatedPayoff.toFixed(5),
+                        quantityFactor: quantityFactor.toFixed(2),
+                        finalPayoff: payoff.toFixed(5)
+                    });
+                }
 
                  if (!isNaN(premium)) {
                      // Pour une position longue (achat), premium est un coût
@@ -1098,45 +1124,45 @@ const Index = () => {
                     totalPremiumPerUnit = 0;
                     break;
                 case 'call':
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * (optionQuantity / 100);
+                    totalPremiumPerUnit = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * (optionQuantity / 100);
                     break;
                 case 'put':
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility) * (optionQuantity / 100);
+                    totalPremiumPerUnit = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, currentVolatility) * (optionQuantity / 100);
                     break;
                 case 'collarPut':
                 case 'collarCall':
                     // For zero cost collars, calculate the offset premiums
-                    const putCollarPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility);
-                    const callCollarPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
+                    const putCollarPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, currentVolatility);
+                    const callCollarPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
                     totalPremiumPerUnit = putCollarPremium - callCollarPremium; // Should be near zero for zero-cost collar
                     break;
                 case 'callKO':
                     // Use factor to approximate barrier option premium being cheaper than vanilla
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * 0.7;
+                    totalPremiumPerUnit = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * 0.7;
                     break;
                 case 'putKI':
                     // Use factor to approximate barrier option premium being cheaper than vanilla
-                    totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility) * 0.7;
+                    totalPremiumPerUnit = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, currentVolatility) * 0.7;
                     break;
                 case 'strangle':
-                    const stranglePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility);
-                    const strangleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
+                    const stranglePutPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, currentVolatility);
+                    const strangleCallPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
                     totalPremiumPerUnit = stranglePutPremium + strangleCallPremium;
                     break;
                 case 'straddle':
-                     const straddlePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, currentVolatility);
-                     const straddleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeMid, r_d, r_f, t, currentVolatility);
+                     const straddlePutPremium = calculateOptionPrice('put', S, strikeMid, r_d, r_f, t, currentVolatility);
+                     const straddleCallPremium = calculateOptionPrice('call', S, strikeMid, r_d, r_f, t, currentVolatility);
                      totalPremiumPerUnit = straddlePutPremium + straddleCallPremium;
                      break;
                 case 'seagull':
-                     const seagullPutBuyPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, currentVolatility);
-                     const seagullCallSellPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
-                     const seagullPutSellPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility);
+                     const seagullPutBuyPremium = calculateOptionPrice('put', S, strikeMid, r_d, r_f, t, currentVolatility);
+                     const seagullCallSellPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, currentVolatility);
+                     const seagullPutSellPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, currentVolatility);
                      totalPremiumPerUnit = seagullPutBuyPremium - seagullCallSellPremium - seagullPutSellPremium;
                      break;
                 case 'callPutKI_KO':
-                     const callKOPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * 0.7;
-                     const putKIPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, currentVolatility) * 0.7;
+                     const callKOPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, currentVolatility) * 0.7;
+                     const putKIPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, currentVolatility) * 0.7;
                      totalPremiumPerUnit = callKOPremium + putKIPremium;
                      break;
                 default:
@@ -1303,10 +1329,10 @@ const Index = () => {
 
                 // Premium (calculated at current 'spot')
                 if (comp.type === 'call' || comp.type === 'put') { 
-                    componentPremium = calculateOptionPrice_GarmanKohlhagen(comp.type, spot, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor); 
+                    componentPremium = calculateOptionPrice(comp.type, spot, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor); 
                 }
                 else if (comp.type.includes('knock')) { 
-                    componentPremium = calculateOptionPrice_GarmanKohlhagen(comp.type.includes('call') ? 'call' : 'put', spot, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor); 
+                    componentPremium = calculateOptionPrice(comp.type.includes('call') ? 'call' : 'put', spot, strikeRate, r_d, r_f, t, componentVol) * Math.abs(quantityFactor); 
                 }
                 
                 // Pour une position longue (achat), le premium est un coût (négatif)
@@ -1353,49 +1379,49 @@ const Index = () => {
                     break;
                 case 'call': 
                     // For a long call, the premium is negative (cost)
-                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * quantityFactor; 
+                    premiumCost = -calculateOptionPrice('call', spot, strikeUpper, r_d, r_f, t, vol) * quantityFactor; 
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     break;
                 case 'put': 
                     // For a long put, the premium is negative (cost)
-                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * quantityFactor; 
+                    premiumCost = -calculateOptionPrice('put', spot, strikeLower, r_d, r_f, t, vol) * quantityFactor; 
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     break;
                 case 'collarPut':
                     // For zero cost collars, the premiums should offset each other
-                    const putCollarPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol);
-                    const callCollarPremium = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol);
+                    const putCollarPremium = calculateOptionPrice('put', spot, strikeLower, r_d, r_f, t, vol);
+                    const callCollarPremium = calculateOptionPrice('call', spot, strikeUpper, r_d, r_f, t, vol);
                     premiumCost = -(putCollarPremium - callCollarPremium); // Should be near zero for properly structured collar
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     break;
                 case 'callKO': 
                     // Approximate KO premium using vanilla option price adjusted
-                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * 0.7 * quantityFactor; // Adjust factor
+                    premiumCost = -calculateOptionPrice('call', spot, strikeUpper, r_d, r_f, t, vol) * 0.7 * quantityFactor; // Adjust factor
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     optionDetailsForChart['KO Barrier'] = barrierUpper; 
                     break;
                 case 'putKI': 
                     // Approximate KI premium using vanilla option price adjusted
-                    premiumCost = -calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * 0.7 * quantityFactor; // Adjust factor
+                    premiumCost = -calculateOptionPrice('put', spot, strikeLower, r_d, r_f, t, vol) * 0.7 * quantityFactor; // Adjust factor
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     optionDetailsForChart['KI Barrier'] = barrierLower; 
                     break;
                 case 'strangle': 
-                    premiumCost = -(calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) 
-                                + calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol)) * quantityFactor;
+                    premiumCost = -(calculateOptionPrice('put', spot, strikeLower, r_d, r_f, t, vol) 
+                                + calculateOptionPrice('call', spot, strikeUpper, r_d, r_f, t, vol)) * quantityFactor;
                     optionDetailsForChart['Put Strike'] = strikeLower; 
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     break;
                 case 'straddle': 
-                    premiumCost = -(calculateOptionPrice_GarmanKohlhagen('put', spot, strikeMid, r_d, r_f, t, vol) 
-                                + calculateOptionPrice_GarmanKohlhagen('call', spot, strikeMid, r_d, r_f, t, vol)) * quantityFactor; 
+                    premiumCost = -(calculateOptionPrice('put', spot, strikeMid, r_d, r_f, t, vol) 
+                                + calculateOptionPrice('call', spot, strikeMid, r_d, r_f, t, vol)) * quantityFactor; 
                     optionDetailsForChart['Strike'] = strikeMid; 
                     break;
                 case 'seagull':
-                    const buyPutPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeMid, r_d, r_f, t, vol);
-                    const sellCallPremium = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol);
-                    const sellPutPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol);
+                    const buyPutPremium = calculateOptionPrice('put', spot, strikeMid, r_d, r_f, t, vol);
+                    const sellCallPremium = calculateOptionPrice('call', spot, strikeUpper, r_d, r_f, t, vol);
+                    const sellPutPremium = calculateOptionPrice('put', spot, strikeLower, r_d, r_f, t, vol);
                     premiumCost = -(buyPutPremium - sellCallPremium - sellPutPremium) * quantityFactor;
                     optionDetailsForChart['Buy Put Strike'] = strikeMid; 
                     optionDetailsForChart['Sell Call Strike'] = strikeUpper; 
@@ -1403,8 +1429,8 @@ const Index = () => {
                     break;
                 case 'callPutKI_KO': 
                     // Approximating complex barrier structure with adjusted pricing
-                    const callKOPremium = calculateOptionPrice_GarmanKohlhagen('call', spot, strikeUpper, r_d, r_f, t, vol) * 0.7;
-                    const putKIPremium = calculateOptionPrice_GarmanKohlhagen('put', spot, strikeLower, r_d, r_f, t, vol) * 0.7;
+                    const callKOPremium = calculateOptionPrice('call', spot, strikeUpper, r_d, r_f, t, vol) * 0.7;
+                    const putKIPremium = calculateOptionPrice('put', spot, strikeLower, r_d, r_f, t, vol) * 0.7;
                     premiumCost = -(callKOPremium + putKIPremium) * quantityFactor;
                     optionDetailsForChart['Call Strike'] = strikeUpper; 
                     optionDetailsForChart['Put Strike'] = strikeLower; 
@@ -1510,8 +1536,10 @@ const Index = () => {
     const scenario = key === 'custom' ? customStressScenario : stressTestScenarios[key];
     if (!scenario) return;
 
+    // Save original state including custom strategy components
     setOriginalParams(params);
     setOriginalRealRateParams(realRateParams);
+    setOriginalCustomStrategyComponents([...customStrategyComponents]); // Save a copy of the custom strategy components
 
     // Modifications:
     // 1. On n'applique plus le choc directement au taux spot
@@ -1533,6 +1561,13 @@ const Index = () => {
     if (originalParams && originalRealRateParams) {
         setParams(originalParams);
         setRealRateParams(originalRealRateParams);
+        
+        // Restore custom strategy components if they were saved
+        if (originalCustomStrategyComponents) {
+            setCustomStrategyComponents([...originalCustomStrategyComponents]);
+            setOriginalCustomStrategyComponents(null);
+        }
+        
         setOriginalParams(null);
         setOriginalRealRateParams(null);
         setActiveStressTestKey(null);
@@ -1811,7 +1846,7 @@ const Index = () => {
           
           // Recalculer la prime avec la nouvelle volatilité
           if (comp.type === 'call' || comp.type === 'put') {
-            premium = calculateOptionPrice_GarmanKohlhagen(
+            premium = calculateOptionPrice(
               comp.type as 'call' | 'put', 
               S, 
               strikeRate, 
@@ -1823,7 +1858,7 @@ const Index = () => {
           } else if (comp.type.includes('KO') || comp.type.includes('KI')) {
             // Pour les options à barrière, on approxime avec un facteur de réduction
             const baseOption = comp.type.includes('call') ? 'call' : 'put';
-            premium = calculateOptionPrice_GarmanKohlhagen(
+            premium = calculateOptionPrice(
               baseOption as 'call' | 'put',
               S,
               strikeRate,
@@ -1850,43 +1885,43 @@ const Index = () => {
             totalPremiumPerUnit = 0; // Les forwards n'ont pas de prime
             break;
           case 'call':
-            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * (optionQuantity / 100);
+            totalPremiumPerUnit = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, vol) * (optionQuantity / 100);
             break;
           case 'put':
-            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * (optionQuantity / 100);
+            totalPremiumPerUnit = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, vol) * (optionQuantity / 100);
             break;
           case 'collarPut':
           case 'collarCall':
             // Zero-cost collar
-            const putCollarPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
-            const callCollarPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
+            const putCollarPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, vol);
+            const callCollarPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, vol);
             totalPremiumPerUnit = putCollarPremium - callCollarPremium;
             break;
           case 'callKO':
-            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
+            totalPremiumPerUnit = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
             break;
           case 'putKI':
-            totalPremiumPerUnit = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
+            totalPremiumPerUnit = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
             break;
           case 'strangle':
-            const stranglePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
-            const strangleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
+            const stranglePutPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, vol);
+            const strangleCallPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, vol);
             totalPremiumPerUnit = stranglePutPremium + strangleCallPremium;
             break;
           case 'straddle':
-            const straddlePutPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, vol);
-            const straddleCallPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeMid, r_d, r_f, t, vol);
+            const straddlePutPremium = calculateOptionPrice('put', S, strikeMid, r_d, r_f, t, vol);
+            const straddleCallPremium = calculateOptionPrice('call', S, strikeMid, r_d, r_f, t, vol);
             totalPremiumPerUnit = straddlePutPremium + straddleCallPremium;
             break;
           case 'seagull':
-            const seagullPutBuyPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeMid, r_d, r_f, t, vol);
-            const seagullCallSellPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol);
-            const seagullPutSellPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol);
+            const seagullPutBuyPremium = calculateOptionPrice('put', S, strikeMid, r_d, r_f, t, vol);
+            const seagullCallSellPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, vol);
+            const seagullPutSellPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, vol);
             totalPremiumPerUnit = seagullPutBuyPremium - seagullCallSellPremium - seagullPutSellPremium;
             break;
           case 'callPutKI_KO':
-            const callKOPremium = calculateOptionPrice_GarmanKohlhagen('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
-            const putKIPremium = calculateOptionPrice_GarmanKohlhagen('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
+            const callKOPremium = calculateOptionPrice('call', S, strikeUpper, r_d, r_f, t, vol) * 0.7;
+            const putKIPremium = calculateOptionPrice('put', S, strikeLower, r_d, r_f, t, vol) * 0.7;
             totalPremiumPerUnit = callKOPremium + putKIPremium;
             break;
           default:
@@ -2166,6 +2201,7 @@ const Index = () => {
                             foreignRate={params.foreignRate}
                             notional={params.baseNotional}
                             notionalQuote={params.quoteNotional}
+                            initialOptions={customStrategyComponents}
                         />
                     )}
                      {selectedStrategy !== 'custom' && selectedStrategy !== 'forward' && (
@@ -2740,7 +2776,7 @@ const Index = () => {
             setRiskMatrixResults={setRiskMatrixResults}
             params={params}
              mainStrategy={selectedStrategy === 'custom' ? customStrategyComponents : []}
-            calculateOptionPrice={calculateOptionPrice_GarmanKohlhagen}
+            calculateOptionPrice={calculateOptionPrice}
             calculateBarrierPayoff={calculateBarrierPayoff}
             initialSpotRate={initialSpotRate}
           />
@@ -2748,10 +2784,21 @@ const Index = () => {
 
         <TabsContent value="stress-testing">
            {activeStressTestKey && (
-                 <div className="mb-4 flex justify-end">
-                     <Button variant="destructive" onClick={clearStressTest}>
-                         <AlertCircle className="mr-2 h-4 w-4" /> Clear Applied Stress Test ({activeStressTestKey})
-                     </Button>
+                 <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                     <div className="flex items-center justify-between">
+                         <div className="flex-1">
+                             <p className="text-sm text-blue-800 font-medium">
+                                 📊 Stress Test Active: "{activeStressTestKey}"
+                             </p>
+                             <p className="text-xs text-blue-600 mt-1">
+                                 Votre stratégie personnalisée et tous les paramètres sont préservés. 
+                                 Utilisez le bouton "Clear" pour revenir à l'état original.
+                             </p>
+                         </div>
+                         <Button variant="destructive" size="sm" onClick={clearStressTest}>
+                             <AlertCircle className="mr-2 h-4 w-4" /> Clear Applied Stress Test
+                         </Button>
+                     </div>
         </div>
              )}
           <StressTesting

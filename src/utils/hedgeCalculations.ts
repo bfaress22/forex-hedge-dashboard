@@ -1,27 +1,14 @@
 import { calculateCall as gkCall, calculatePut as gkPut, calculateForward as gkForward, cnd } from './garmanKohlhagen';
 
-// Black-Scholes option pricing for Forex
-export const calculateD1D2 = (S: number, K: number, T: number, r1: number, r2: number, sigma: number) => {
-  const d1 = (Math.log(S/K) + (r1 - r2 + Math.pow(sigma, 2)/2) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
-  return [d1, d2];
-};
+// Black-Scholes option pricing for Forex - SUPPRIMÉ: redondant avec garmanKohlhagen.ts
+// export const calculateD1D2 = ... - FONCTION SUPPRIMÉE
 
-export const calculateCall = (S: number, K: number, T: number, r1: number, r2: number, sigma: number) => {
-  // Utiliser directement les fonctions de garmanKohlhagen.ts qui respectent le modèle sélectionné
-  // Importer les bonnes fonctions pour éviter la confusion avec les aliases
-  return gkCall(S, K, T, r1, r2, sigma);
-};
-
-export const calculatePut = (S: number, K: number, T: number, r1: number, r2: number, sigma: number) => {
-  // Utiliser directement les fonctions de garmanKohlhagen.ts qui respectent le modèle sélectionné
-  return gkPut(S, K, T, r1, r2, sigma);
-};
+// SUPPRIMÉ: wrappers redondants - utiliser directement les fonctions de garmanKohlhagen.ts
+export const calculateCall = gkCall;
+export const calculatePut = gkPut;
 
 // Forward rate calculation
-export const calculateForward = (S: number, T: number, r1: number, r2: number) => {
-  return gkForward(S, T, r1, r2);
-};
+export const calculateForward = gkForward;
 
 // New function to calculate barrier option prices
 export const calculateBarrierOption = (type: string, S: number, K: number, B: number, T: number, r1: number, r2: number, sigma: number, isKnockIn: boolean) => {

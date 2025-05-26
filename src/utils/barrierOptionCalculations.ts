@@ -1,5 +1,5 @@
 // Calculations for barrier options
-import { cnd } from './garmanKohlhagen';
+import { cnd, calculateCall, calculatePut, d1, d2 } from './garmanKohlhagen';
 
 // Models for barrier option pricing
 export const BARRIER_PRICING_MODELS = {
@@ -7,33 +7,25 @@ export const BARRIER_PRICING_MODELS = {
   CLOSED_FORM: "closed_form"
 };
 
-// Default model
 let currentPricingModel = BARRIER_PRICING_MODELS.MONTE_CARLO;
 
-// Function to set the pricing model
 export const setPricingModel = (model: string) => {
-  if (Object.values(BARRIER_PRICING_MODELS).includes(model as any)) {
+  if (Object.values(BARRIER_PRICING_MODELS).includes(model)) {
     currentPricingModel = model;
-    return true;
+    console.log(`[BARRIER PRICING] Model set to: ${model}`);
+  } else {
+    console.warn(`[BARRIER PRICING] Invalid model: ${model}. Using default: ${BARRIER_PRICING_MODELS.MONTE_CARLO}`);
+    currentPricingModel = BARRIER_PRICING_MODELS.MONTE_CARLO;
   }
-  return false;
 };
 
+export const getCurrentPricingModel = () => currentPricingModel;
+
+// === ANALYTICAL FORMULAS FOR BARRIER OPTIONS ===
+
 /**
- * Calcule le prix d'une option à barrière simple selon le modèle analytique
- * Implémentation de la formule "Standard Barrier" de Haug (1997)
- * 
- * @param typeFlag Type d'option: "cdi", "cui", "pdi", "pui", "cdo", "cuo", "pdo", "puo"
- *                 c/p = call/put, d/u = down/up, i/o = in/out
- * @param S Spot price (prix actuel)
- * @param X Strike price (prix d'exercice)
- * @param H Barrier price (niveau de barrière)
- * @param T Time to maturity (temps jusqu'à échéance en années)
- * @param r Domestic interest rate (taux d'intérêt domestique)
- * @param b Cost of carry (b = r - rf pour les options sur devise)
- * @param v Volatility (volatilité)
- * @param K Rebate (remboursement si la barrière est touchée pour les KO, ou non touchée pour les KI)
- * @returns Prix de l'option à barrière
+ * Standard barrier option pricing using closed-form analytical solutions
+ * Based on Merton (1973) and extensions for barrier options
  */
 export function standardBarrier(
   typeFlag: string,
@@ -242,16 +234,6 @@ export function doubleBarrier(
   return 0;
 }
 
-// Fonctions auxiliaires pour le calcul des d1 et d2 (formule Black-Scholes standard)
-function d1(S: number, X: number, T: number, r: number, rf: number, v: number): number {
-  return (Math.log(S / X) + (r - rf + v * v / 2) * T) / (v * Math.sqrt(T));
-}
-
-function d2(S: number, X: number, T: number, r: number, rf: number, v: number): number {
-  return d1(S, X, T, r, rf, v) - v * Math.sqrt(T);
-}
-
-// Intègre les nouvelles fonctions dans l'API existante
 export const calculateBarrierOptionPrice = (
   type: string,
   spot: number,
@@ -277,12 +259,12 @@ export const calculateBarrierOptionPrice = (
   const isKI = type.includes('KI');
   const isDouble = upperBarrier !== undefined && lowerBarrier !== undefined;
   
-  // Vanilla options calculated using closed-form solution
+  // Vanilla options - utiliser les fonctions principales de garmanKohlhagen.ts
   if (!isKO && !isKI) {
     if (isCall) {
-      return callPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
+      return calculateCall(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
     } else if (isPut) {
-      return putPrice(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
+      return calculatePut(spot, strike, t, domesticRate, foreignRate, volatility) * (quantity / 100);
     }
   }
   
@@ -320,7 +302,7 @@ export const calculateBarrierOptionPrice = (
   }
   
   // Fallback to Monte Carlo for complex cases
-    return calculateMonteCarloPrice(
+  return calculateMonteCarloPrice(
     isCall, isPut, isKO, isKI, false, isDouble,
     spot, strike, upperBarrier, lowerBarrier, t,
     domesticRate, foreignRate, volatility, quantity
@@ -363,56 +345,6 @@ function getDoubleBarrierTypeFlag(
     return isKO ? "po" : "pi";
   }
 }
-
-// Simplified Black-Scholes for calls
-function callPrice(spot: number, strike: number, maturity: number, r1: number, r2: number, vol: number): number {
-  const d1Value = d1(spot, strike, maturity, r1, r2, vol);
-  const d2Value = d2(spot, strike, maturity, r1, r2, vol);
-  return spot * Math.exp(-r2 * maturity) * cnd(d1Value) - strike * Math.exp(-r1 * maturity) * cnd(d2Value);
-}
-
-// Simplified Black-Scholes for puts
-function putPrice(spot: number, strike: number, maturity: number, r1: number, r2: number, vol: number): number {
-  const d1Value = d1(spot, strike, maturity, r1, r2, vol);
-  const d2Value = d2(spot, strike, maturity, r1, r2, vol);
-  return strike * Math.exp(-r1 * maturity) * cnd(-d2Value) - spot * Math.exp(-r2 * maturity) * cnd(-d1Value);
-}
-
-// Closed-form analytical solution for barrier options (single barrier only)
-const calculateClosedFormBarrierOptionPrice = (
-  isCall: boolean, isPut: boolean, isKO: boolean, isKI: boolean, 
-  isReverse: boolean, spot: number, strike: number, barrier: number, 
-  maturity: number, r1: number, r2: number, vol: number, quantity: number
-) => {
-  // Utiliser la nouvelle implémentation standardBarrier pour les calculs
-  let typeFlag = "";
-  
-  if (isCall) {
-    if (isKI) {
-      typeFlag = isReverse ? "cdi" : "cui"; // down/up and in
-    } else { // isKO
-      typeFlag = isReverse ? "cdo" : "cuo"; // down/up and out
-    }
-  } else { // isPut
-    if (isKI) {
-      typeFlag = isReverse ? "pui" : "pdi"; // up/down and in
-    } else { // isKO
-      typeFlag = isReverse ? "puo" : "pdo"; // up/down and out
-    }
-  }
-  
-  return standardBarrier(
-    typeFlag,
-    spot,
-    strike,
-    barrier,
-    maturity,
-    r1,
-    r2,
-    vol,
-    0 // Pas de rebate (K=0)
-  ) * (quantity / 100);
-};
 
 // Monte Carlo simulation for barrier options
 // Export this function to be used from garmanKohlhagen.ts for vanilla options
@@ -607,51 +539,6 @@ const isBarrierActive = (spot: number, upperBarrier: number, lowerBarrier: numbe
   } else {
     return (spot <= lowerBarrier || spot >= upperBarrier) ? 1.0 : 0.0;
   }
-};
-
-// Simplified calculation of a call option price
-const calculateCallPrice = (spot: number, strike: number, maturity: number, r1: number, r2: number, vol: number) => {
-  // Simplified Black-Scholes formula for call options
-  const d1 = (Math.log(spot / strike) + (r1 - r2 + vol * vol / 2) * maturity) / (vol * Math.sqrt(maturity));
-  const d2 = d1 - vol * Math.sqrt(maturity);
-  
-  // Standard normal approximation of N(d)
-  const nd1 = normCDF(d1);
-  const nd2 = normCDF(d2);
-  
-  return spot * Math.exp(-r2 * maturity) * nd1 - strike * Math.exp(-r1 * maturity) * nd2;
-};
-
-// Simplified calculation of a put option price
-const calculatePutPrice = (spot: number, strike: number, maturity: number, r1: number, r2: number, vol: number) => {
-  // Simplified Black-Scholes formula for put options
-  const d1 = (Math.log(spot / strike) + (r1 - r2 + vol * vol / 2) * maturity) / (vol * Math.sqrt(maturity));
-  const d2 = d1 - vol * Math.sqrt(maturity);
-  
-  // Standard normal approximation of N(-d)
-  const nd1 = normCDF(-d1);
-  const nd2 = normCDF(-d2);
-  
-  return strike * Math.exp(-r1 * maturity) * nd2 - spot * Math.exp(-r2 * maturity) * nd1;
-};
-
-// Approximation of the cumulative normal distribution function
-const normCDF = (x: number) => {
-  // Approximation of N(x)
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
-  
-  const sign = x < 0 ? -1 : 1;
-  const absX = Math.abs(x);
-  
-  const t = 1.0 / (1.0 + p * absX);
-  const y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX / 2);
-  
-  return 0.5 * (1.0 + sign * y);
 };
 
 // Function to calculate the payoff of a barrier option at a given spot
@@ -937,12 +824,38 @@ export const calculateBarrierPayoff = (
       const strikeRate = component.strikeType === 'percent' 
         ? initialSpot * (component.strike / 100) 
         : component.strike;
-      return Math.max(0, currentSpot - strikeRate);
+      const payoff = Math.max(0, currentSpot - strikeRate);
+      
+      // Debug log
+      console.log(`Call payoff calculation:`, {
+        currentSpot: currentSpot.toFixed(4),
+        strikeRate: strikeRate.toFixed(4),
+        strikePercent: component.strike,
+        strikeType: component.strikeType,
+        initialSpot: initialSpot.toFixed(4),
+        payoff: payoff.toFixed(5),
+        isITM: currentSpot > strikeRate
+      });
+      
+      return payoff;
     } else if (component.type === 'put') {
       const strikeRate = component.strikeType === 'percent' 
         ? initialSpot * (component.strike / 100) 
         : component.strike;
-      return Math.max(0, strikeRate - currentSpot);
+      const payoff = Math.max(0, strikeRate - currentSpot);
+      
+      // Debug log
+      console.log(`Put payoff calculation:`, {
+        currentSpot: currentSpot.toFixed(4),
+        strikeRate: strikeRate.toFixed(4),
+        strikePercent: component.strike,
+        strikeType: component.strikeType,
+        initialSpot: initialSpot.toFixed(4),
+        payoff: payoff.toFixed(5),
+        isITM: currentSpot < strikeRate
+      });
+      
+      return payoff;
     }
     return basePayoff; // Fallback
   }

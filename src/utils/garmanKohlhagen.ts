@@ -40,6 +40,31 @@ export function getVanillaPricingModel(): string {
   return currentVanillaPricingModel;
 }
 
+/**
+ * Calcul de d1 pour le modèle Garman-Kohlhagen
+ */
+export function d1(S: number, X: number, T: number, r: number, rf: number, v: number): number {
+  return (Math.log(S / X) + (r - rf + v * v / 2) * T) / (v * Math.sqrt(T));
+}
+
+/**
+ * Calcul de d2 pour le modèle Garman-Kohlhagen
+ */
+export function d2(S: number, X: number, T: number, r: number, rf: number, v: number): number {
+  return d1(S, X, T, r, rf, v) - v * Math.sqrt(T);
+}
+
+/**
+ * Calcul du prix d'une option selon le modèle Garman-Kohlhagen
+ * @param callPutFlag - Type d'option ('c' pour call, 'p' pour put)
+ * @param S - Prix spot de l'actif sous-jacent
+ * @param X - Prix d'exercice (strike)
+ * @param T - Temps jusqu'à l'échéance (en années)
+ * @param r - Taux d'intérêt domestique (sans risque)
+ * @param rf - Taux d'intérêt étranger (sans risque)
+ * @param v - Volatilité implicite
+ * @returns Prix de l'option
+ */
 export function garmanKohlhagen(
   callPutFlag: string,
   S: number,
@@ -49,26 +74,22 @@ export function garmanKohlhagen(
   rf: number,
   v: number
 ): number {
-  // Validation des données d'entrée
-  if (S <= 0 || X <= 0 || T <= 0 || v <= 0) {
-    console.error('Invalid inputs for option pricing:', { S, X, T, v });
-    return 0;
-  }
-
-  // Prévenir les problèmes numériques avec des valeurs trop petites
+  // Validation des paramètres d'entrée
   const minValue = 1e-10;
+  S = Math.max(S, minValue);
+  X = Math.max(X, minValue);
   T = Math.max(T, minValue);
   v = Math.max(v, minValue);
   
-  // Calcul des termes du modèle Garman-Kohlhagen
-  const d1 = (Math.log(S / X) + (r - rf + v * v / 2) * T) / (v * Math.sqrt(T));
-  const d2 = d1 - v * Math.sqrt(T);
+  // Calcul des termes du modèle Garman-Kohlhagen en utilisant les fonctions exportées
+  const d1_val = d1(S, X, T, r, rf, v);
+  const d2_val = d2(S, X, T, r, rf, v);
   
   // Calcul du prix selon le type d'option
   if (callPutFlag.toLowerCase() === "c" || callPutFlag.toLowerCase().includes("call")) {
-    return S * Math.exp(-rf * T) * cnd(d1) - X * Math.exp(-r * T) * cnd(d2);
+    return S * Math.exp(-rf * T) * cnd(d1_val) - X * Math.exp(-r * T) * cnd(d2_val);
   } else if (callPutFlag.toLowerCase() === "p" || callPutFlag.toLowerCase().includes("put")) {
-    return X * Math.exp(-r * T) * cnd(-d2) - S * Math.exp(-rf * T) * cnd(-d1);
+    return X * Math.exp(-r * T) * cnd(-d2_val) - S * Math.exp(-rf * T) * cnd(-d1_val);
   }
   
   // Type d'option non reconnu
